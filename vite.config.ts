@@ -17,5 +17,14 @@ export default defineConfig({
   // on Netlify produces a Netlify Function for SSR instead of a Cloudflare Worker.
   nitro: {
     preset: process.env.NITRO_PRESET ?? "netlify",
+    // Override the lovable defaults that hardcode `dist/server`. Netlify only
+    // auto-detects SSR functions when they're inside `.netlify/functions-internal/`
+    // (or `netlify/functions/`). Putting the bundle in dist/server makes Netlify
+    // skip it and the site falls back to 404 on every route.
+    output: {
+      dir: ".",
+      serverDir: ".netlify/functions-internal/server",
+      publicDir: "dist/client",
+    },
   },
 });
