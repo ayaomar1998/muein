@@ -3,7 +3,7 @@ import { useQuery } from "@tanstack/react-query";
 import { useForm } from "react-hook-form";
 import { zodResolver } from "@hookform/resolvers/zod";
 import { z } from "zod";
-import { useCallback, useEffect, useMemo, useRef, useState } from "react";
+import { useCallback, useEffect, useMemo, useState } from "react";
 import { supabase } from "@/integrations/supabase/client";
 import { useI18n } from "@/lib/i18n";
 import { cn } from "@/lib/utils";
@@ -19,6 +19,10 @@ import {
   X,
   ArrowRight,
   ArrowLeft,
+  FileText,
+  Layers,
+  ListChecks,
+  Camera,
   Sparkles,
 } from "lucide-react";
 
@@ -54,21 +58,26 @@ export const Route = createFileRoute("/_app/customer/requests/new")({
   component: NewReq,
 });
 
-const MONTHS = ["JANUARY","FEBRUARY","MARCH","APRIL","MAY","JUNE","JULY","AUGUST","SEPTEMBER","OCTOBER","NOVEMBER","DECEMBER"];
-const WEEKDAYS = ["SUNDAY","MONDAY","TUESDAY","WEDNESDAY","THURSDAY","FRIDAY","SATURDAY"];
-
-function todayLine(): string {
-  const d = new Date();
-  return `${WEEKDAYS[d.getDay()]} · ${MONTHS[d.getMonth()]} ${String(d.getDate()).padStart(2,"0")} · ${d.getFullYear()}`;
-}
-
 function NewReq() {
-  const { t, lang, dir } = useI18n() as { t: (k: string) => string; lang: string; dir?: "ltr" | "rtl" };
+  const { t, lang, dir } = useI18n() as {
+    t: (k: string) => string;
+    lang: string;
+    dir?: "ltr" | "rtl";
+  };
+  const isRtl = dir === "rtl" || lang === "ar";
+  const Arrow = isRtl ? ArrowLeft : ArrowRight;
   const nav = useNavigate();
+  const fmt = useMemo(
+    () =>
+      new Intl.NumberFormat(
+        lang === "ar" ? "ar-EG" : lang === "tr" ? "tr-TR" : "en-US",
+      ),
+    [lang],
+  );
+
   const [images, setImages] = useState<string[]>([]);
   const [loading, setLoading] = useState(false);
   const [geo, setGeo] = useState<GeoState>({ status: "idle" });
-  const formTopRef = useRef<HTMLDivElement>(null);
 
   useEffect(() => {
     document.title = t("meta_new_request_title");
@@ -89,7 +98,13 @@ function NewReq() {
       ((await supabase.from("service_categories").select("*").eq("is_active", true)).data ?? []) as Category[],
   });
 
-  const { register, handleSubmit, setValue, watch, formState: { errors } } = useForm<FormVals>({
+  const {
+    register,
+    handleSubmit,
+    setValue,
+    watch,
+    formState: { errors },
+  } = useForm<FormVals>({
     resolver: zodResolver(schema),
     defaultValues: { title: "", description: "", address: "", city: "" },
   });
@@ -145,7 +160,7 @@ function NewReq() {
     if (descVal.trim().length >= 20) n += 1;
     if (addressVal.trim().length >= 5) n += 1;
     if (geo.status === "detected") n += 1;
-    return n; // out of 5
+    return n;
   }, [catId, titleVal, descVal, addressVal, geo]);
   const readyToFile = completion === 5;
 
@@ -191,747 +206,604 @@ function NewReq() {
     nav({ to: `/customer/requests/${req!.id}` });
   };
 
-  const isRTL = dir === "rtl";
-  const Arrow = isRTL ? ArrowLeft : ArrowRight;
-  const todayStr = todayLine();
+  const bearingsLabel =
+    geo.status === "detected"
+      ? `${geo.lat.toFixed(3)}, ${geo.lng.toFixed(3)}`
+      : geo.status === "detecting"
+        ? isRtl ? "جاري…" : "FIXING…"
+        : isRtl ? "—" : "OFF";
 
   return (
-    <div className="-m-4 md:-m-6 lg:-m-8">
-      <style>{`
-        @import url('https://fonts.googleapis.com/css2?family=Fraunces:opsz,wght@9..144,300;9..144,400;9..144,500;9..144,700;9..144,900&family=IBM+Plex+Mono:wght@400;500;600&display=swap');
-
-        .matter-bg {
-          background-color: #f4f1ea;
-          background-image:
-            radial-gradient(circle at 12% 8%,  oklch(0.86 0.18 95 / 0.22) 0, transparent 38%),
-            radial-gradient(circle at 92% 18%, oklch(0 0 0 / 0.05) 0, transparent 34%),
-            radial-gradient(circle at 80% 92%, oklch(0.86 0.18 95 / 0.12) 0, transparent 40%),
-            linear-gradient(180deg, transparent 0%, oklch(0 0 0 / 0.04) 100%);
-        }
-        .dark .matter-bg {
-          background-color: #0e0e0d;
-          background-image:
-            radial-gradient(circle at 12% 8%,  oklch(0.88 0.18 95 / 0.18) 0, transparent 42%),
-            radial-gradient(circle at 92% 18%, oklch(1 0 0 / 0.05) 0, transparent 36%),
-            radial-gradient(circle at 80% 92%, oklch(0.88 0.18 95 / 0.10) 0, transparent 40%);
-        }
-        .grain { position: relative; }
-        .grain::after {
-          content:""; position:absolute; inset:0; pointer-events:none; opacity:.5; mix-blend-mode:multiply;
-          background-image:url("data:image/svg+xml;utf8,<svg xmlns='http://www.w3.org/2000/svg' width='220' height='220'><filter id='n'><feTurbulence type='fractalNoise' baseFrequency='0.9' numOctaves='2' stitchTiles='stitch'/><feColorMatrix values='0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0.28 0'/></filter><rect width='100%' height='100%' filter='url(%23n)'/></svg>");
-          background-size:220px 220px;
-        }
-        .dark .grain::after { mix-blend-mode: screen; opacity:.32; }
-
-        .ed-display { font-family:'Fraunces', 'IBM Plex Sans Arabic', serif; font-variation-settings:"SOFT" 50, "WONK" 1; letter-spacing:-0.035em; line-height:0.92; }
-        .ed-italic  { font-family:'Fraunces', serif; font-style: italic; font-variation-settings:"SOFT" 100, "WONK" 1; }
-        .ed-serif   { font-family:'Fraunces', 'IBM Plex Sans Arabic', serif; }
-        .ed-mono    { font-family:'IBM Plex Mono', ui-monospace, monospace; letter-spacing:0.22em; text-transform:uppercase; }
-
-        .rule-thick { height:3px; background:currentColor; }
-        .rule-thin  { height:1px; background:currentColor; opacity:.35; }
-        .rule-hair  { height:1px; background:currentColor; opacity:.18; }
-
-        .panel       { position:relative; background:transparent; border:1px solid currentColor; border-radius:0; }
-        .panel-fill  { background:var(--color-foreground); color:var(--color-background); }
-        .corner-tag {
-          position:absolute; top:-1px; padding:.35rem .65rem; z-index:2;
-          font-family:'IBM Plex Mono', monospace; font-size:.6rem; letter-spacing:.28em; text-transform:uppercase;
-          background:var(--color-foreground); color:var(--color-primary);
-        }
-
-        /* Hero highlight bar — sits behind a serif word */
-        .word-mark {
-          position: relative;
-          display: inline-block;
-        }
-        .word-mark::before {
-          content:""; position:absolute; inset:auto -.15em .12em -.15em; height:.46em; z-index:-1;
-          background: var(--color-primary);
-          transform: skewX(-7deg);
-        }
-
-        /* Underline-only big field */
-        .matter-field {
-          width:100%; background:transparent; border:0;
-          border-bottom: 1px solid var(--color-foreground);
-          font-family: 'Fraunces', 'IBM Plex Sans Arabic', serif;
-          font-size: 1.5rem; line-height: 1.35;
-          padding: .65rem 0 .65rem 0;
-          color: var(--color-foreground); outline: none;
-          transition: border-color .2s, padding .2s, background-color .2s;
-          border-radius: 0;
-        }
-        .matter-field::placeholder {
-          color: color-mix(in oklab, var(--color-foreground), transparent 65%);
-          font-family:'IBM Plex Sans Arabic','Inter', system-ui, sans-serif;
-          font-style: italic;
-          font-size: 1rem;
-        }
-        .matter-field:focus {
-          border-bottom-color: var(--color-primary);
-          border-bottom-width: 3px;
-          padding-bottom: calc(.65rem - 2px);
-        }
-        .matter-field-err { border-bottom-color: var(--color-destructive) !important; }
-
-        .matter-area {
-          width:100%; background:transparent; border:1px solid var(--color-foreground);
-          font-family: 'Fraunces', 'IBM Plex Sans Arabic', serif;
-          font-size: 1.05rem; line-height: 1.55;
-          padding: 1rem 1.1rem; color: var(--color-foreground); outline: none;
-          border-radius:0; resize: vertical; min-height: 9rem;
-          transition: box-shadow .18s ease, border-color .18s ease;
-        }
-        .matter-area:focus {
-          box-shadow: 6px 6px 0 0 var(--color-primary);
-        }
-        [dir="rtl"] .matter-area:focus { box-shadow: -6px 6px 0 0 var(--color-primary); }
-
-        /* Brutalist category tile */
-        .trade-tile {
-          position:relative; display:flex; flex-direction:column; gap:.85rem;
-          padding: 1.1rem 1.1rem 1.15rem 1.1rem;
-          background: var(--color-background);
-          border: 1px solid var(--color-foreground);
-          border-radius:0; text-align:start; cursor:pointer;
-          transition: transform .18s ease, box-shadow .18s ease, background-color .18s, color .18s;
-        }
-        .trade-tile:hover { transform: translate(-2px,-2px); box-shadow: 5px 5px 0 0 var(--color-foreground); }
-        [dir="rtl"] .trade-tile:hover { box-shadow:-5px 5px 0 0 var(--color-foreground); }
-        .trade-tile[data-active="true"] {
-          background: var(--color-foreground);
-          color: var(--color-background);
-          box-shadow: 6px 6px 0 0 var(--color-primary);
-          transform: translate(-2px,-2px);
-        }
-        [dir="rtl"] .trade-tile[data-active="true"] { box-shadow:-6px 6px 0 0 var(--color-primary); }
-        .trade-tile:focus-visible { outline: 2px solid var(--color-primary); outline-offset: 2px; }
-
-        .trade-glyph {
-          width: 2.6rem; height: 2.6rem; display:flex; align-items:center; justify-content:center;
-          border: 1px solid currentColor;
-        }
-        .trade-tile[data-active="true"] .trade-glyph { background: var(--color-primary); color: var(--color-foreground); border-color: var(--color-primary); }
-
-        /* Section heading layout */
-        .sec-num {
-          display:inline-flex; align-items:center; justify-content:center;
-          height: 2.25rem; min-width: 4rem; padding: 0 .9rem;
-          background: var(--color-foreground); color: var(--color-primary);
-          font-family:'IBM Plex Mono', monospace; font-size:.7rem; letter-spacing:.32em; font-weight:600;
-          text-transform: uppercase;
-        }
-
-        /* Big stamp CTA */
-        .stamp-btn {
-          position:relative; display:inline-flex; align-items:center; justify-content:space-between;
-          gap:.75rem; width:100%; padding: 1.05rem 1.25rem;
-          background: var(--color-foreground); color: var(--color-background);
-          font-family:'IBM Plex Mono', monospace; font-size:.78rem; letter-spacing:.32em; font-weight:600; text-transform:uppercase;
-          border: 1px solid var(--color-foreground); border-radius:0;
-          box-shadow: 7px 7px 0 0 var(--color-primary);
-          transition: transform .18s, box-shadow .18s, background-color .18s, color .18s;
-          cursor: pointer;
-        }
-        .stamp-btn:hover:not(:disabled) { transform: translate(-2px,-2px); box-shadow: 9px 9px 0 0 var(--color-primary); }
-        .stamp-btn:active:not(:disabled) { transform: translate(2px,2px); box-shadow: 3px 3px 0 0 var(--color-primary); }
-        .stamp-btn:disabled { opacity:.55; cursor:not-allowed; box-shadow: 4px 4px 0 0 oklch(0 0 0 / 0.15); }
-        [dir="rtl"] .stamp-btn { box-shadow:-7px 7px 0 0 var(--color-primary); }
-        [dir="rtl"] .stamp-btn:hover:not(:disabled) { transform: translate(2px,-2px); box-shadow:-9px 9px 0 0 var(--color-primary); }
-        [dir="rtl"] .stamp-btn:active:not(:disabled) { transform: translate(-2px,2px); box-shadow:-3px 3px 0 0 var(--color-primary); }
-        [dir="rtl"] .stamp-btn:disabled { box-shadow:-4px 4px 0 0 oklch(0 0 0 / 0.15); }
-
-        .ghost-btn {
-          display:inline-flex; align-items:center; gap:.55rem;
-          padding:.85rem 1rem; background:transparent; color: var(--color-foreground);
-          border:1px solid var(--color-foreground); border-radius:0;
-          font-family:'IBM Plex Mono', monospace; font-size:.72rem; letter-spacing:.28em; text-transform:uppercase;
-          cursor:pointer; transition: background-color .15s, color .15s;
-        }
-        .ghost-btn:hover { background: var(--color-foreground); color: var(--color-primary); }
-
-        /* Pulse dot for live state */
-        .pulse-dot { position:relative; width:.6rem; height:.6rem; border-radius:9999px; background: oklch(0.7 0.18 145); }
-        .pulse-dot::before {
-          content:""; position:absolute; inset:-2px; border-radius:9999px;
-          background: oklch(0.7 0.18 145 / 0.55);
-          animation: matter-pulse 2s ease-out infinite;
-        }
-        @keyframes matter-pulse {
-          0% { transform: scale(.6); opacity: .8; }
-          100% { transform: scale(2.5); opacity: 0; }
-        }
-        .pulse-dot-warn   { background: var(--color-primary); }
-        .pulse-dot-warn::before { background: var(--color-primary); opacity: .35; }
-        .pulse-dot-off    { background: color-mix(in oklab, var(--color-foreground), transparent 50%); }
-        .pulse-dot-off::before { display:none; }
-
-        /* Completion meter */
-        .meter { display:grid; grid-template-columns: repeat(5, 1fr); gap: 4px; }
-        .meter > span { height: 12px; border: 1px solid currentColor; }
-        .meter > span.on { background: var(--color-primary); border-color: var(--color-primary); }
-
-        /* Image tile */
-        .img-tile {
-          position: relative; aspect-ratio: 1 / 1; overflow: hidden;
-          border: 1px solid var(--color-foreground); background: var(--color-background); border-radius:0;
-        }
-        .img-tile img { width:100%; height:100%; object-fit: cover; display:block; }
-        .img-rm {
-          position:absolute; top:6px; inset-inline-end:6px; height:1.75rem; width:1.75rem;
-          background: var(--color-foreground); color: var(--color-primary); border:0;
-          display:flex; align-items:center; justify-content:center; cursor:pointer; border-radius:0;
-          box-shadow: 2px 2px 0 0 var(--color-primary);
-        }
-        [dir="rtl"] .img-rm { box-shadow:-2px 2px 0 0 var(--color-primary); }
-        .img-add {
-          position:relative; aspect-ratio: 1/1; display:flex; flex-direction:column; align-items:center; justify-content:center;
-          gap:.5rem; cursor:pointer; border:1px dashed var(--color-foreground); background: transparent;
-          font-family:'IBM Plex Mono', monospace; font-size:.65rem; letter-spacing:.28em; text-transform:uppercase;
-          color: color-mix(in oklab, var(--color-foreground), transparent 30%);
-          transition: background-color .18s, color .18s, border-style .18s;
-        }
-        .img-add:hover { background: var(--color-foreground); color: var(--color-primary); border-style: solid; }
-
-        .ed-mark::before { content:"§"; margin-inline-end:.4rem; font-family:'Fraunces', serif; }
-
-        /* Marquee */
-        .matter-marquee { display:flex; gap:2.5rem; width:max-content; animation: matter-mq 38s linear infinite; }
-        [dir="rtl"] .matter-marquee { animation-name: matter-mq-rtl; }
-        @keyframes matter-mq      { from { transform: translateX(0);} to { transform: translateX(-50%);} }
-        @keyframes matter-mq-rtl  { from { transform: translateX(0);} to { transform: translateX(50%);} }
-
-        .star {
-          display:inline-block; width:.7rem; height:.7rem; background: var(--color-primary);
-          clip-path: polygon(50% 0,61% 35%,98% 35%,68% 57%,79% 91%,50% 70%,21% 91%,32% 57%,2% 35%,39% 35%);
-        }
-
-        /* Fancy underline-skip used in hero/index */
-        .underline-skip {
-          background-image: linear-gradient(currentColor, currentColor);
-          background-position: 0 92%; background-repeat:no-repeat;
-          background-size: 100% 6px;
-          padding-bottom: 2px;
-        }
-
-        /* Drawn entrance for hero rule */
-        .draw-line { transform-origin: left; animation: draw .9s cubic-bezier(.7,.1,.2,1) both; }
-        [dir="rtl"] .draw-line { transform-origin: right; }
-        @keyframes draw { from { transform: scaleX(0);} to { transform: scaleX(1);} }
-
-        /* Sidebar sticky on lg */
-        @media (min-width: 1024px) {
-          .bureau-stick { position: sticky; top: 1.5rem; }
-        }
-
-        /* Field label */
-        .field-label {
-          display:flex; align-items:baseline; justify-content:space-between; gap:.75rem;
-          font-family:'IBM Plex Mono', monospace; font-size:.66rem; letter-spacing:.3em; text-transform:uppercase;
-          color: color-mix(in oklab, var(--color-foreground), transparent 25%);
-          margin-bottom:.35rem;
-        }
-        .field-count { font-family:'IBM Plex Mono', monospace; font-size:.65rem; letter-spacing:.18em; }
-
-        .err-line {
-          font-family:'IBM Plex Mono', monospace; font-size:.65rem; letter-spacing:.18em; text-transform:uppercase;
-          color: var(--color-destructive); margin-top:.5rem; display:inline-flex; align-items:center; gap:.4rem;
-        }
-
-        .skel { background: linear-gradient(90deg, oklch(0 0 0 / 0.08), oklch(0 0 0 / 0.15), oklch(0 0 0 / 0.08));
-                background-size:200% 100%; animation: skel-sh 1.6s linear infinite; }
-        .dark .skel { background: linear-gradient(90deg, oklch(1 0 0 / 0.06), oklch(1 0 0 / 0.14), oklch(1 0 0 / 0.06)); background-size:200% 100%; }
-        @keyframes skel-sh { 0% { background-position: 200% 0; } 100% { background-position: -200% 0; } }
-
-        /* Hairline list separator inside sidebar */
-        .bureau-list > * + * { border-top: 1px solid color-mix(in oklab, currentColor, transparent 80%); }
-      `}</style>
-
-      <div className="matter-bg min-h-[calc(100vh-4rem)] text-foreground">
-        {/* ═══ MASTHEAD ═══════════════════════════════════════════════ */}
-        <section className="relative grain px-5 md:px-10 lg:px-16 pt-9 md:pt-12 pb-5">
-          <div className="flex items-baseline justify-between flex-wrap gap-3">
-            <div className="ed-mono text-[10px] md:text-[11px] text-foreground/70 flex items-center gap-3">
-              <span className="inline-flex h-2 w-2 bg-foreground" />
-              <span>VOL.&nbsp;Y &nbsp;·&nbsp; INTAKE BUREAU &nbsp;·&nbsp; A NEW MATTER</span>
-            </div>
-            <div className="ed-mono text-[10px] md:text-[11px] text-foreground/70 hidden md:flex items-center gap-3">
-              <span>{todayStr}</span>
-            </div>
-          </div>
-          <div className="mt-3 rule-thick text-foreground draw-line" />
-
-          <div ref={formTopRef} className="mt-9 md:mt-12 grid grid-cols-12 gap-6 md:gap-10 items-end">
-            <div className="col-span-12 lg:col-span-8">
-              <div className="ed-mono text-[10px] md:text-[11px] text-foreground/60 mb-3 animate-fade-up">
-                THE COVER &nbsp;·&nbsp; N° 0 &nbsp;·&nbsp; INTAKE
-              </div>
-              <h1 className="ed-display text-[3rem] sm:text-[4.25rem] md:text-[5.75rem] lg:text-[7rem] animate-fade-up">
-                File a
-                <span className="ed-italic font-light">&nbsp;new</span>
-              </h1>
-              <h2 className="ed-display text-[3rem] sm:text-[4.25rem] md:text-[5.75rem] lg:text-[7rem] -mt-2 animate-fade-up delay-100">
-                <span className="word-mark">matter</span>
-                <span className="ed-italic font-light">.</span>
-              </h2>
-              <p className="mt-6 max-w-2xl ed-italic text-lg md:text-xl text-foreground/75 animate-fade-up delay-200">
-                Place it on the record. The bureau routes your request to the
-                nearest qualified hand &mdash; quietly, without fuss.
-              </p>
-            </div>
-
-            <aside className="col-span-12 lg:col-span-4 animate-fade-up delay-300">
-              <BureauStrip geo={geo} requestLocation={requestLocation} />
-            </aside>
-          </div>
-        </section>
-
-        {/* Marquee strip */}
-        <div className="border-y border-foreground/80 overflow-hidden bg-foreground text-background py-2.5 mt-3">
-          <div className="matter-marquee ed-mono text-[11px]">
-            {Array.from({ length: 2 }).flatMap((_, k) =>
-              ["INTAKE OPEN", "ROUTED IN MINUTES", "VERIFIED HANDS", "FAIR PRICE", "QUIET DISPATCH", "ON THE RECORD", "FILED WITH CARE", "TRADESPEOPLE AT THE READY"].map((w, i) => (
-                <span key={`${k}-${i}`} className="flex items-center gap-6">
-                  <span className="star" />
-                  <span>{w}</span>
-                </span>
-              )),
-            )}
-          </div>
+    <form
+      onSubmit={handleSubmit(onSubmit)}
+      className="space-y-6 -m-4 md:-m-6 lg:-m-8 p-4 md:p-6 lg:p-8 bg-background min-h-[calc(100vh-4rem)]"
+    >
+      {/* === MASTHEAD === */}
+      <header className="grid grid-cols-12 gap-4 items-end pb-2 border-b-2 border-foreground">
+        <div className="col-span-12 lg:col-span-8">
+          <h1 className="font-display text-[clamp(2.5rem,6vw,4.75rem)] leading-[0.9] tracking-tight text-foreground">
+            <span className="block italic font-light">{t("new_request")}</span>
+            <span className="block">
+              {fmt.format(completion)}<span className="text-primary">/</span>{fmt.format(5)}
+              <span className="text-primary">.</span>
+            </span>
+          </h1>
+          <p className="mt-4 max-w-xl text-sm text-muted-foreground leading-relaxed">
+            {lang === "en"
+              ? "File a new matter. The bureau routes your request to the nearest qualified hand."
+              : lang === "tr"
+                ? "Yeni bir talep oluştur. Talebiniz en yakın uzman ele yönlendirilecek."
+                : "سجّل طلبًا جديدًا. سيُوجَّه طلبك إلى أقرب يدٍ مؤهلة."}{" "}
+            <span className="font-mono-ui text-foreground/70">
+              // {readyToFile
+                ? isRtl ? "جاهز للإرسال." : "ready to file."
+                : isRtl ? `${fmt.format(5 - completion)} متبقّي.` : `${fmt.format(5 - completion)} left.`}
+            </span>
+          </p>
         </div>
+        <div className="col-span-12 lg:col-span-4 grid grid-cols-2 gap-2 lg:justify-end">
+          <KeyBox
+            icon={ListChecks}
+            label={isRtl ? "اكتمال" : "PROGRESS"}
+            value={`${fmt.format(completion)}/${fmt.format(5)}`}
+            mono
+          />
+          <KeyBox
+            icon={MapPin}
+            label={isRtl ? "الموقع" : "BEARINGS"}
+            value={bearingsLabel}
+            mono
+          />
+        </div>
+      </header>
 
-        {/* ═══ BODY: form + bureau ════════════════════════════════════ */}
-        <form
-          onSubmit={handleSubmit(onSubmit)}
-          className="px-5 md:px-10 lg:px-16 pt-10 md:pt-14 pb-20 grid grid-cols-12 gap-6 md:gap-10"
+      {/* === COMMAND BAR === */}
+      <div className="border border-foreground bg-card flex flex-wrap items-stretch divide-x divide-foreground rtl:divide-x-reverse">
+        <div className="flex items-center gap-3 px-4 py-3 min-w-0">
+          <Sparkles className="h-3.5 w-3.5 text-foreground/70" />
+          <span className="label-mono text-foreground">
+            {isRtl ? "إيداع" : "INTAKE"}
+          </span>
+        </div>
+        <div className="flex items-center px-4 py-3 flex-1 min-w-[200px] font-mono-ui text-[10px] uppercase tracking-[0.22em] text-foreground/70">
+          {isRtl ? "املأ الحقول الخمسة لإرسال الطلب" : "Complete all five fields to file"}
+        </div>
+        <Link
+          to="/customer/requests"
+          className="px-4 py-3 font-mono-ui text-[11px] tracking-[0.18em] uppercase flex items-center gap-2 text-foreground hover:bg-muted transition-colors"
         >
-          {/* ── LEFT: the manuscript ────────────────────────────────── */}
-          <div className="col-span-12 lg:col-span-8 space-y-14">
-            {/* N° I — THE TRADE */}
-            <SectionShell num="I" eyebrow="Choose the trade" title="The trade" italic="what shall we attend to?">
-              {catsLoading ? (
-                <div className="grid grid-cols-2 md:grid-cols-3 gap-3">
-                  {Array.from({ length: 6 }).map((_, i) => (
-                    <div key={i} className="trade-tile">
-                      <div className="skel h-10 w-10" />
-                      <div className="skel h-4 w-2/3" />
-                      <div className="skel h-3 w-full" />
-                    </div>
-                  ))}
-                </div>
-              ) : (
-                <div role="radiogroup" aria-label={t("select_service")} className="grid grid-cols-2 md:grid-cols-3 gap-3">
-                  {(categories ?? []).map((c, idx) => {
-                    const Icon = resolveIcon(c.icon);
-                    const selected = catId === c.id;
-                    const name = displayName(c);
-                    const desc = displayDesc(c);
-                    return (
-                      <button
-                        key={c.id}
-                        type="button"
-                        role="radio"
-                        aria-checked={selected}
-                        onClick={() => setValue("category_id", c.id, { shouldValidate: true })}
-                        className="trade-tile"
-                        data-active={selected ? "true" : "false"}
+          <ArrowLeft className={`h-3.5 w-3.5 ${isRtl ? "rotate-180" : ""}`} />
+          {t("cancel")}
+        </Link>
+      </div>
+
+      {/* === GRID: FORM + DOCKET === */}
+      <div className="grid gap-4 lg:grid-cols-[1fr_320px]">
+        {/* MAIN: form sections */}
+        <div className="space-y-6 min-w-0">
+          {/* I — THE TRADE */}
+          <FormPanel
+            num="01"
+            label={isRtl ? "الخدمة" : "TRADE"}
+            title={t("select_service")}
+            icon={Layers}
+            ok={!!catId}
+          >
+            {catsLoading ? (
+              <div className="grid gap-3 md:grid-cols-2">
+                {Array.from({ length: 4 }).map((_, i) => (
+                  <div key={i} className="border border-foreground/40 bg-card h-32 animate-pulse" />
+                ))}
+              </div>
+            ) : (
+              <div
+                role="radiogroup"
+                aria-label={t("select_service")}
+                className="grid gap-3 md:grid-cols-2"
+              >
+                {(categories ?? []).map((c, idx) => {
+                  const Icon = resolveIcon(c.icon);
+                  const selected = catId === c.id;
+                  const name = displayName(c);
+                  const desc = displayDesc(c);
+                  return (
+                    <button
+                      key={c.id}
+                      type="button"
+                      role="radio"
+                      aria-checked={selected}
+                      onClick={() => setValue("category_id", c.id, { shouldValidate: true })}
+                      className={cn(
+                        "group/card relative flex flex-col gap-3 border border-foreground bg-card p-4 text-start h-full transition-all",
+                        "hover:brutal-shadow-sm hover:-translate-x-[2px] hover:-translate-y-[2px]",
+                        selected && "bg-foreground text-primary",
+                      )}
+                    >
+                      <div
+                        className={cn(
+                          "flex items-center justify-between -mx-4 -mt-4 px-4 py-2 border-b font-mono-ui text-[10px] uppercase tracking-[0.22em]",
+                          selected
+                            ? "border-primary/30 bg-foreground/80"
+                            : "border-foreground/20 bg-muted/30",
+                        )}
                       >
-                        <div className="flex items-start justify-between gap-2">
-                          <div className="trade-glyph">
-                            <Icon className="h-5 w-5" />
-                          </div>
-                          <div className="ed-mono text-[9px] opacity-60 leading-none pt-2">
+                        <span className={cn("tabular-nums", selected ? "text-primary/80" : "text-foreground/70")}>
+                          № {String(idx + 1).padStart(3, "0")}
+                        </span>
+                        {selected && (
+                          <span className="flex items-center gap-1">
+                            <CheckCircle2 className="h-3 w-3" />
+                            {isRtl ? "محدد" : "PICKED"}
+                          </span>
+                        )}
+                      </div>
+
+                      <div className="flex items-start gap-3">
+                        <div
+                          className={cn(
+                            "h-12 w-12 border flex items-center justify-center shrink-0",
+                            selected
+                              ? "border-primary bg-primary text-foreground"
+                              : "border-foreground bg-foreground text-primary",
+                          )}
+                        >
+                          <Icon className="h-5 w-5" />
+                        </div>
+                        <div className="min-w-0 flex-1">
+                          <div
+                            className={cn(
+                              "label-mono truncate",
+                              selected ? "text-primary/80" : "text-foreground/70",
+                            )}
+                          >
                             № {String(idx + 1).padStart(2, "0")}
                           </div>
+                          <h3 className="font-display text-xl leading-tight mt-0.5 truncate">
+                            {name}
+                          </h3>
                         </div>
-                        <div className="ed-serif text-lg leading-tight font-medium">{name}</div>
-                        {desc && (
-                          <div className="ed-italic text-xs leading-snug opacity-80 line-clamp-2">{desc}</div>
-                        )}
-                        {selected && (
-                          <div className="absolute bottom-2 inset-inline-end-2 end-2 ed-mono text-[9px] flex items-center gap-1">
-                            <CheckCircle2 className="h-3 w-3" />
-                            FILED
-                          </div>
-                        )}
-                      </button>
-                    );
-                  })}
-                </div>
-              )}
-              {errors.category_id && (
-                <p className="err-line"><AlertTriangle className="h-3 w-3" />{errors.category_id.message}</p>
-              )}
-            </SectionShell>
-
-            {/* N° II — THE PARTICULARS */}
-            <SectionShell num="II" eyebrow="The particulars" title="The particulars" italic="state your case, plainly">
-              <div className="space-y-7">
-                <div>
-                  <div className="field-label">
-                    <span>{t("title")} &nbsp;·&nbsp; A short line</span>
-                    <span className="field-count">{titleVal.length}/120</span>
-                  </div>
-                  <input
-                    {...register("title")}
-                    placeholder={t("request_title_placeholder")}
-                    className={cn("matter-field", errors.title && "matter-field-err")}
-                  />
-                  {errors.title && (
-                    <p className="err-line"><AlertTriangle className="h-3 w-3" />{errors.title.message}</p>
-                  )}
-                </div>
-
-                <div>
-                  <div className="field-label">
-                    <span>{t("description")} &nbsp;·&nbsp; The full account</span>
-                    <span className="field-count">{descVal.length}/2000</span>
-                  </div>
-                  <textarea
-                    {...register("description")}
-                    rows={5}
-                    placeholder={t("request_description_placeholder")}
-                    className="matter-area"
-                  />
-                  {errors.description && (
-                    <p className="err-line"><AlertTriangle className="h-3 w-3" />{errors.description.message}</p>
-                  )}
-                </div>
-              </div>
-            </SectionShell>
-
-            {/* N° III — THE WHEREABOUTS */}
-            <SectionShell num="III" eyebrow="The whereabouts" title="The whereabouts" italic="where we are to call">
-              <div className="grid md:grid-cols-2 gap-7">
-                <div>
-                  <div className="field-label">
-                    <span>{t("address")}</span>
-                    <MapPin className="h-3 w-3" />
-                  </div>
-                  <input
-                    {...register("address")}
-                    placeholder={isRTL ? "العنوان التفصيلي" : "Street, building, apt..."}
-                    className={cn("matter-field", errors.address && "matter-field-err")}
-                  />
-                  {errors.address && (
-                    <p className="err-line"><AlertTriangle className="h-3 w-3" />{errors.address.message}</p>
-                  )}
-                </div>
-                <div>
-                  <div className="field-label">
-                    <span>{t("city")}</span>
-                  </div>
-                  <input
-                    {...register("city")}
-                    placeholder={isRTL ? "المدينة" : "City, district..."}
-                    className="matter-field"
-                  />
-                </div>
-              </div>
-
-              <div className="mt-6 panel p-4 md:p-5 text-foreground/85">
-                <div className="flex items-start gap-3">
-                  {geo.status === "detected" ? (
-                    <span className="pulse-dot mt-2" aria-hidden />
-                  ) : geo.status === "detecting" ? (
-                    <Loader2 className="h-4 w-4 animate-spin mt-1.5" />
-                  ) : (
-                    <span className="pulse-dot pulse-dot-warn mt-2" aria-hidden />
-                  )}
-                  <div className="flex-1 min-w-0">
-                    <div className="ed-mono text-[10px] mb-1">
-                      {geo.status === "detected"
-                        ? "PRESS · LOCATION FIXED"
-                        : geo.status === "detecting"
-                          ? "PRESS · TAKING THE BEARINGS"
-                          : "PRESS · BEARINGS REQUIRED"}
-                    </div>
-                    {geo.status === "detected" ? (
-                      <div className="ed-italic text-base">
-                        {t("current_location")}: <span className="ed-mono not-italic tracking-normal text-sm">
-                          {geo.lat.toFixed(5)}, {geo.lng.toFixed(5)}
-                        </span>
                       </div>
-                    ) : geo.status === "detecting" ? (
-                      <div className="ed-italic text-base">{t("detecting_location")}&hellip;</div>
-                    ) : (
+
+                      {desc && (
+                        <p
+                          className={cn(
+                            "text-sm leading-relaxed line-clamp-2",
+                            selected ? "text-primary/80" : "text-muted-foreground",
+                          )}
+                        >
+                          {desc}
+                        </p>
+                      )}
+                    </button>
+                  );
+                })}
+              </div>
+            )}
+            {errors.category_id && (
+              <ErrorLine msg={errors.category_id.message ?? ""} />
+            )}
+          </FormPanel>
+
+          {/* II — PARTICULARS */}
+          <FormPanel
+            num="02"
+            label={isRtl ? "التفاصيل" : "PARTICULARS"}
+            title={isRtl ? "اشرح طلبك" : "State your case"}
+            icon={FileText}
+            ok={titleVal.trim().length >= 3 && descVal.trim().length >= 20}
+          >
+            <div className="space-y-5">
+              <FieldRow
+                label={t("title")}
+                count={`${titleVal.length}/120`}
+              >
+                <input
+                  {...register("title")}
+                  placeholder={t("request_title_placeholder")}
+                  className={cn("input-edit", errors.title && "!border-destructive")}
+                />
+                {errors.title && <ErrorLine msg={errors.title.message ?? ""} />}
+              </FieldRow>
+
+              <FieldRow
+                label={t("description")}
+                count={`${descVal.length}/2000`}
+              >
+                <textarea
+                  {...register("description")}
+                  rows={5}
+                  placeholder={t("request_description_placeholder")}
+                  className={cn(
+                    "w-full border border-foreground bg-card p-3 font-serif text-base leading-relaxed text-foreground outline-none resize-y min-h-[8rem] focus:brutal-shadow-sm transition-shadow",
+                    errors.description && "border-destructive",
+                  )}
+                />
+                {errors.description && (
+                  <ErrorLine msg={errors.description.message ?? ""} />
+                )}
+              </FieldRow>
+            </div>
+          </FormPanel>
+
+          {/* III — WHEREABOUTS */}
+          <FormPanel
+            num="03"
+            label={isRtl ? "الموقع" : "WHEREABOUTS"}
+            title={isRtl ? "أين نأتي إليك" : "Where to call"}
+            icon={MapPin}
+            ok={addressVal.trim().length >= 5 && geo.status === "detected"}
+          >
+            <div className="grid md:grid-cols-2 gap-5">
+              <FieldRow label={t("address")}>
+                <input
+                  {...register("address")}
+                  placeholder={isRtl ? "العنوان التفصيلي" : "Street, building, apt..."}
+                  className={cn("input-edit", errors.address && "!border-destructive")}
+                />
+                {errors.address && <ErrorLine msg={errors.address.message ?? ""} />}
+              </FieldRow>
+              <FieldRow label={t("city")}>
+                <input
+                  {...register("city")}
+                  placeholder={isRtl ? "المدينة" : "City, district..."}
+                  className="input-edit"
+                />
+              </FieldRow>
+            </div>
+
+            <div className="mt-5 border border-foreground bg-muted/30 p-4">
+              <div className="flex items-start gap-3">
+                <div
+                  className={cn(
+                    "h-8 w-8 border border-foreground flex items-center justify-center shrink-0",
+                    geo.status === "detected"
+                      ? "bg-foreground text-primary"
+                      : "bg-card text-foreground",
+                  )}
+                >
+                  {geo.status === "detecting" ? (
+                    <Loader2 className="h-4 w-4 animate-spin" />
+                  ) : geo.status === "detected" ? (
+                    <CheckCircle2 className="h-4 w-4" />
+                  ) : (
+                    <AlertTriangle className="h-4 w-4" />
+                  )}
+                </div>
+                <div className="flex-1 min-w-0">
+                  <div className="label-mono text-foreground/70">
+                    {geo.status === "detected"
+                      ? (isRtl ? "تم تحديد الموقع" : "LOCATION FIXED")
+                      : geo.status === "detecting"
+                        ? (isRtl ? "جاري التحديد" : "FIXING BEARINGS")
+                        : (isRtl ? "الموقع مطلوب" : "BEARINGS REQUIRED")}
+                  </div>
+                  <div className="mt-1 font-mono-ui text-[12px] text-foreground tabular-nums">
+                    {geo.status === "detected" ? (
                       <>
-                        <div className="ed-italic text-base">
-                          {geo.status === "denied"
-                            ? t("location_denied")
-                            : geo.status === "unavailable"
-                              ? t("location_unavailable")
-                              : geo.status === "unsupported"
-                                ? t("location_unsupported")
-                                : t("location_required_desc")}
-                        </div>
-                        {geo.status !== "unsupported" && (
-                          <button type="button" onClick={requestLocation} className="ghost-btn mt-3">
-                            <MapPin className="h-3.5 w-3.5" />
-                            <span>
-                              {geo.status === "denied" || geo.status === "unavailable"
-                                ? t("retry_location")
-                                : t("enable_location")}
-                            </span>
-                          </button>
-                        )}
+                        {t("current_location")}: {geo.lat.toFixed(5)}, {geo.lng.toFixed(5)}
                       </>
+                    ) : geo.status === "detecting" ? (
+                      <>{t("detecting_location")}…</>
+                    ) : (
+                      <span className="text-muted-foreground">
+                        {geo.status === "denied"
+                          ? t("location_denied")
+                          : geo.status === "unavailable"
+                            ? t("location_unavailable")
+                            : geo.status === "unsupported"
+                              ? t("location_unsupported")
+                              : t("location_required_desc")}
+                      </span>
                     )}
                   </div>
+                  {geo.status !== "detected" &&
+                    geo.status !== "detecting" &&
+                    geo.status !== "unsupported" && (
+                      <button
+                        type="button"
+                        onClick={requestLocation}
+                        className="mt-3 px-3 py-2 border border-foreground bg-card hover:bg-foreground hover:text-primary transition-colors font-mono-ui text-[10px] tracking-[0.22em] uppercase flex items-center gap-2"
+                      >
+                        <MapPin className="h-3 w-3" />
+                        {geo.status === "denied" || geo.status === "unavailable"
+                          ? t("retry_location")
+                          : t("enable_location")}
+                      </button>
+                    )}
                 </div>
               </div>
-            </SectionShell>
+            </div>
+          </FormPanel>
 
-            {/* N° IV — THE EVIDENCE */}
-            <SectionShell num="IV" eyebrow="The evidence" title="The evidence" italic="up to five photographs, kindly">
-              <BrutalUploader value={images} onChange={setImages} />
-            </SectionShell>
-          </div>
+          {/* IV — EVIDENCE */}
+          <FormPanel
+            num="04"
+            label={isRtl ? "الصور" : "EVIDENCE"}
+            title={isRtl ? "أرفق صورًا" : "Attach photos"}
+            icon={Camera}
+            ok={images.length > 0}
+            optional
+          >
+            <BrutalUploader value={images} onChange={setImages} isRtl={isRtl} />
+          </FormPanel>
+        </div>
 
-          {/* ── RIGHT: BUREAU sidebar (sticky on lg) ─────────────────── */}
-          <aside className="col-span-12 lg:col-span-4">
-            <div className="bureau-stick space-y-5">
-              <BureauDocket
-                completion={completion}
-                selectedCat={selectedCat ? displayName(selectedCat) : null}
-                titleVal={titleVal}
-                descVal={descVal}
-                addressVal={addressVal}
-                cityVal={cityVal}
-                geo={geo}
-                imageCount={images.length}
-                isRTL={isRTL}
-              />
+        {/* SIDEBAR: docket */}
+        <aside className="lg:sticky lg:top-6 self-start space-y-3">
+          <div className="border border-foreground bg-card">
+            <div className="flex items-baseline justify-between px-4 pt-3 pb-2 border-b border-foreground/15">
+              <div className="flex items-center gap-2">
+                <ListChecks className="h-3 w-3 text-foreground/70" />
+                <h2 className="label-mono text-foreground tracking-[0.24em]">
+                  {isRtl ? "الملخّص" : "DOCKET"}
+                </h2>
+              </div>
+              <span className="font-mono-ui text-[10px] tabular-nums text-foreground/70">
+                {fmt.format(completion)}/{fmt.format(5)}
+              </span>
+            </div>
 
-              <button
-                type="submit"
-                disabled={loading || geo.status !== "detected" || !readyToFile}
-                className="stamp-btn"
-              >
-                {loading ? (
-                  <>
-                    <span>FILING&hellip;</span>
-                    <Loader2 className="h-4 w-4 animate-spin" />
-                  </>
-                ) : !readyToFile ? (
-                  <>
-                    <span>{`COMPLETE ${completion}/5 TO FILE`}</span>
-                    <Sparkles className="h-4 w-4" />
-                  </>
-                ) : (
-                  <>
-                    <span>{t("submit")} &nbsp;·&nbsp; STAMP &amp; FILE</span>
-                    <Arrow className="h-4 w-4" />
-                  </>
-                )}
-              </button>
-
-              <Link
-                to="/customer/requests"
-                className="ghost-btn w-full justify-center"
-              >
-                <X className="h-3.5 w-3.5" />
-                {t("cancel")}
-              </Link>
-
-              <div className="ed-mono text-[10px] text-foreground/55 leading-relaxed pt-2 border-t border-foreground/15">
-                <span className="ed-mark" />
-                ALL FILINGS ARE PRIVATE. ONLY THE TRADESPEOPLE WHO ACCEPT
-                YOUR MATTER WILL SEE ITS PARTICULARS.
+            {/* meter */}
+            <div className="px-4 py-3 border-b border-foreground/15">
+              <div className="grid grid-cols-5 gap-1">
+                {Array.from({ length: 5 }).map((_, i) => (
+                  <span
+                    key={i}
+                    className={cn(
+                      "h-2 border border-foreground",
+                      i < completion ? "bg-primary border-primary" : "bg-background",
+                    )}
+                  />
+                ))}
               </div>
             </div>
-          </aside>
-        </form>
+
+            <ul className="divide-y divide-border">
+              <DocketRow
+                label={isRtl ? "الخدمة" : "TRADE"}
+                value={selectedCat ? displayName(selectedCat) : "—"}
+                ok={!!selectedCat}
+              />
+              <DocketRow
+                label={isRtl ? "العنوان" : "TITLE"}
+                value={titleVal.trim() || "—"}
+                ok={titleVal.trim().length >= 3}
+              />
+              <DocketRow
+                label={isRtl ? "الوصف" : "DETAIL"}
+                value={
+                  descVal.trim()
+                    ? `${descVal.trim().slice(0, 48)}${descVal.length > 48 ? "…" : ""}`
+                    : "—"
+                }
+                ok={descVal.trim().length >= 20}
+              />
+              <DocketRow
+                label={isRtl ? "المكان" : "WHERE"}
+                value={[addressVal, cityVal].filter(Boolean).join(" · ") || "—"}
+                ok={addressVal.trim().length >= 5}
+              />
+              <DocketRow
+                label={isRtl ? "الموقع" : "BEARINGS"}
+                value={
+                  geo.status === "detected"
+                    ? `${geo.lat.toFixed(4)}, ${geo.lng.toFixed(4)}`
+                    : geo.status === "detecting"
+                      ? (isRtl ? "جاري…" : "Fixing…")
+                      : (isRtl ? "—" : "Not given")
+                }
+                ok={geo.status === "detected"}
+              />
+              <DocketRow
+                label={isRtl ? "الصور" : "PHOTOS"}
+                value={
+                  images.length === 0
+                    ? (isRtl ? "—" : "None")
+                    : `${fmt.format(images.length)}`
+                }
+                ok={images.length > 0}
+                optional
+              />
+            </ul>
+          </div>
+
+          <button
+            type="submit"
+            disabled={loading || !readyToFile}
+            className="btn-stamp"
+          >
+            {loading ? (
+              <span className="flex items-center gap-2">
+                <Loader2 className="h-4 w-4 animate-spin" />
+                {isRtl ? "جاري الإرسال…" : "FILING…"}
+              </span>
+            ) : !readyToFile ? (
+              <span className="flex items-center gap-2">
+                <Sparkles className="h-3.5 w-3.5" />
+                {isRtl
+                  ? `أكمل ${fmt.format(5 - completion)} حقول`
+                  : `COMPLETE ${fmt.format(completion)}/${fmt.format(5)}`}
+              </span>
+            ) : (
+              <span className="flex items-center gap-2">
+                {t("submit")}
+                <Arrow className="h-4 w-4" />
+              </span>
+            )}
+          </button>
+
+          <Link
+            to="/customer/requests"
+            className="block text-center w-full px-4 py-3 border border-foreground bg-card hover:bg-muted transition-colors font-mono-ui text-[11px] tracking-[0.22em] uppercase text-foreground"
+          >
+            {t("cancel")}
+          </Link>
+
+          <p className="font-mono-ui text-[10px] uppercase tracking-[0.22em] text-muted-foreground leading-relaxed pt-2 border-t border-foreground/15">
+            {isRtl
+              ? "// جميع الطلبات خاصة. يراها فقط المختصّ المُعتمَد."
+              : "// All filings are private. Only the tradespeople who accept your matter will see the details."}
+          </p>
+        </aside>
+      </div>
+    </form>
+  );
+}
+
+/* ---------- subcomponents ---------- */
+
+function KeyBox({
+  icon: Icon,
+  label,
+  value,
+  mono,
+}: {
+  icon: typeof FileText;
+  label: string;
+  value: string;
+  mono?: boolean;
+}) {
+  return (
+    <div className="border border-foreground bg-card px-3 py-2 flex items-center gap-3 min-w-0">
+      <div className="h-8 w-8 bg-foreground text-background flex items-center justify-center shrink-0">
+        <Icon className="h-4 w-4" />
+      </div>
+      <div className="min-w-0">
+        <div className="label-mono text-muted-foreground truncate">{label}</div>
+        <div
+          className={`${mono ? "font-mono-display text-sm" : "font-display text-lg"} leading-none tabular-nums truncate`}
+        >
+          {value}
+        </div>
       </div>
     </div>
   );
 }
 
-/* ──────────────────────────────────────────────────────────────────── */
-/*  Sub-components                                                       */
-/* ──────────────────────────────────────────────────────────────────── */
-
-function SectionShell({
+function FormPanel({
   num,
-  eyebrow,
+  label,
   title,
-  italic,
+  icon: Icon,
+  ok,
+  optional,
   children,
 }: {
   num: string;
-  eyebrow: string;
+  label: string;
   title: string;
-  italic: string;
+  icon: typeof FileText;
+  ok: boolean;
+  optional?: boolean;
   children: React.ReactNode;
 }) {
   return (
-    <section className="relative">
-      <div className="flex items-end justify-between flex-wrap gap-3 mb-5">
-        <div className="flex items-center gap-3">
-          <span className="sec-num">N° {num}</span>
-          <span className="ed-mono text-[10px] text-foreground/55">{eyebrow}</span>
+    <section className="border border-foreground bg-card">
+      <div className="flex items-center justify-between gap-3 px-4 py-3 border-b border-foreground/20 bg-muted/30">
+        <div className="flex items-center gap-3 min-w-0">
+          <span className="font-mono-ui text-[10px] tracking-[0.28em] uppercase font-semibold bg-foreground text-primary px-2 py-1 tabular-nums">
+            № {num}
+          </span>
+          <div className="flex items-center gap-2 min-w-0">
+            <Icon className="h-3.5 w-3.5 text-foreground/70 shrink-0" />
+            <span className="label-mono text-foreground/70 truncate">{label}</span>
+          </div>
         </div>
-        <div className="ed-italic text-foreground/55 hidden md:block">{italic}</div>
+        <div className="flex items-center gap-2 shrink-0">
+          {optional && (
+            <span className="font-mono-ui text-[9px] tracking-[0.22em] uppercase text-muted-foreground">
+              opt
+            </span>
+          )}
+          <span
+            className={cn(
+              "h-5 w-5 border border-foreground flex items-center justify-center",
+              ok ? "bg-foreground text-primary" : "bg-background text-foreground/30",
+            )}
+          >
+            {ok ? <CheckCircle2 className="h-3 w-3" /> : <span className="h-1.5 w-1.5 bg-current" />}
+          </span>
+        </div>
       </div>
-      <h3 className="ed-display text-[2.4rem] md:text-[3.25rem] mb-5">
-        {title}
-        <span className="ed-italic font-light">.</span>
-      </h3>
-      <div className="rule-thick text-foreground mb-7" />
-      {children}
+      <div className="p-4 md:p-5">
+        <h3 className="font-display text-2xl md:text-3xl leading-tight mb-4">
+          {title}
+          <span className="text-primary">.</span>
+        </h3>
+        {children}
+      </div>
     </section>
   );
 }
 
-function BureauStrip({
-  geo,
-  requestLocation,
+function FieldRow({
+  label,
+  count,
+  children,
 }: {
-  geo: GeoState;
-  requestLocation: () => void;
+  label: string;
+  count?: string;
+  children: React.ReactNode;
 }) {
-  const live = geo.status === "detected";
-  const detecting = geo.status === "detecting";
   return (
-    <div className="panel p-5 relative">
-      <div className="corner-tag start-3">PRESS STATUS</div>
-      <div className="mt-5 flex items-center gap-3">
-        <span
-          className={cn(
-            "pulse-dot",
-            live ? "" : detecting ? "pulse-dot-warn" : "pulse-dot-off",
-          )}
-          aria-hidden
-        />
-        <span className="ed-mono text-[10px]">
-          {live ? "THE PRESS IS WARM" : detecting ? "WARMING UP" : "AWAITING SIGNAL"}
-        </span>
+    <div>
+      <div className="flex items-baseline justify-between gap-3 mb-1">
+        <span className="label-mono text-foreground/70">{label}</span>
+        {count && (
+          <span className="font-mono-ui text-[10px] tabular-nums text-muted-foreground">
+            {count}
+          </span>
+        )}
       </div>
-      <p className="ed-italic mt-3 text-foreground/85 leading-snug text-sm">
-        {live
-          ? "Your bearings are taken. Proceed when ready."
-          : detecting
-            ? "One moment — we are checking your whereabouts."
-            : "We require your bearings before we may dispatch."}
-      </p>
-      {!live && geo.status !== "detecting" && geo.status !== "unsupported" && (
-        <button type="button" onClick={requestLocation} className="ghost-btn mt-4 text-[10px]">
-          <MapPin className="h-3 w-3" /> ENABLE BEARINGS
-        </button>
-      )}
+      {children}
     </div>
   );
 }
 
-function BureauDocket({
-  completion,
-  selectedCat,
-  titleVal,
-  descVal,
-  addressVal,
-  cityVal,
-  geo,
-  imageCount,
-  isRTL,
-}: {
-  completion: number;
-  selectedCat: string | null;
-  titleVal: string;
-  descVal: string;
-  addressVal: string;
-  cityVal: string;
-  geo: GeoState;
-  imageCount: number;
-  isRTL: boolean;
-}) {
-  const rows: Array<{ key: string; label: string; value: string; ok: boolean }> = [
-    {
-      key: "trade",
-      label: "TRADE",
-      value: selectedCat ?? (isRTL ? "—" : "—"),
-      ok: !!selectedCat,
-    },
-    {
-      key: "headline",
-      label: "HEADLINE",
-      value: titleVal.trim().length ? titleVal : "—",
-      ok: titleVal.trim().length >= 3,
-    },
-    {
-      key: "account",
-      label: "ACCOUNT",
-      value:
-        descVal.trim().length === 0
-          ? "—"
-          : `${descVal.trim().slice(0, 64)}${descVal.length > 64 ? "…" : ""}`,
-      ok: descVal.trim().length >= 20,
-    },
-    {
-      key: "where",
-      label: "WHERE",
-      value:
-        addressVal.trim().length === 0 && cityVal.trim().length === 0
-          ? "—"
-          : [addressVal, cityVal].filter(Boolean).join(" · "),
-      ok: addressVal.trim().length >= 5,
-    },
-    {
-      key: "bearings",
-      label: "BEARINGS",
-      value:
-        geo.status === "detected"
-          ? `${geo.lat.toFixed(4)}, ${geo.lng.toFixed(4)}`
-          : geo.status === "detecting"
-            ? "Taking the bearings…"
-            : "Not yet given",
-      ok: geo.status === "detected",
-    },
-    {
-      key: "evidence",
-      label: "EVIDENCE",
-      value: imageCount === 0 ? "None attached" : `${imageCount} photograph${imageCount === 1 ? "" : "s"}`,
-      ok: true, // optional
-    },
-  ];
-
+function ErrorLine({ msg }: { msg: string }) {
   return (
-    <div className="panel-fill grain p-5 relative">
-      <div className="corner-tag" style={{ insetInlineStart: "0.75rem" }}>
-        DOCKET № PENDING
-      </div>
-      <div className="mt-7 flex items-baseline justify-between">
-        <div className="ed-mono text-[10px] opacity-75">CONFIRMATION DESK</div>
-        <div className="ed-mono text-[10px] opacity-75">{completion}/5</div>
-      </div>
-      <h4 className="ed-display text-3xl md:text-[2.5rem] mt-2 leading-none">
-        At a
-        <span className="ed-italic font-light">&nbsp;glance</span>.
-      </h4>
+    <p className="mt-2 font-mono-ui text-[10px] uppercase tracking-[0.18em] text-destructive flex items-center gap-1.5">
+      <AlertTriangle className="h-3 w-3" />
+      {msg}
+    </p>
+  );
+}
 
-      <div className="meter mt-5 text-background">
-        {Array.from({ length: 5 }).map((_, i) => (
-          <span key={i} className={i < completion ? "on" : ""} />
-        ))}
-      </div>
-
-      <ul className="bureau-list mt-6">
-        {rows.map(r => (
-          <li key={r.key} className="py-3 flex items-start gap-4">
-            <span className="ed-mono text-[9px] opacity-65 pt-1 w-20 shrink-0">{r.label}</span>
-            <span className="flex-1 ed-serif text-[0.95rem] leading-snug break-words min-w-0">
-              {r.ok ? r.value : <span className="opacity-55 ed-italic">{r.value}</span>}
-            </span>
-            <span
-              className={cn(
-                "shrink-0 w-2 h-2 mt-2 rounded-full",
-                r.ok ? "bg-[var(--color-primary)]" : "bg-background/30",
-              )}
-            />
-          </li>
-        ))}
-      </ul>
-    </div>
+function DocketRow({
+  label,
+  value,
+  ok,
+  optional,
+}: {
+  label: string;
+  value: string;
+  ok: boolean;
+  optional?: boolean;
+}) {
+  return (
+    <li className="flex items-start gap-3 px-4 py-3">
+      <span className="label-mono text-muted-foreground w-16 shrink-0 pt-0.5">
+        {label}
+      </span>
+      <span
+        className={cn(
+          "flex-1 text-sm leading-snug break-words min-w-0",
+          ok ? "text-foreground" : "text-muted-foreground italic",
+        )}
+      >
+        {value}
+      </span>
+      <span
+        className={cn(
+          "shrink-0 mt-1.5 h-2 w-2 rounded-full",
+          ok
+            ? "bg-primary"
+            : optional
+              ? "bg-foreground/20"
+              : "bg-foreground/30",
+        )}
+      />
+    </li>
   );
 }
 
@@ -940,18 +812,20 @@ function BrutalUploader({
   onChange,
   max = 5,
   bucket = "request-images",
+  isRtl,
 }: {
   value: string[];
   onChange: (urls: string[]) => void;
   max?: number;
   bucket?: string;
+  isRtl: boolean;
 }) {
   const [uploading, setUploading] = useState(false);
 
   const handleFiles = async (files: FileList | null) => {
     if (!files) return;
     if (value.length + files.length > max) {
-      toast.error(`MAX ${max} PHOTOGRAPHS`);
+      toast.error(`MAX ${max}`);
       return;
     }
     setUploading(true);
@@ -982,21 +856,28 @@ function BrutalUploader({
 
   return (
     <div className="space-y-3">
-      <div className="ed-mono text-[10px] text-foreground/55 flex items-center justify-between">
-        <span>{value.length} / {max} ATTACHED</span>
-        <span className="ed-italic normal-case tracking-normal">jpg · png · webp · 5MB</span>
+      <div className="flex items-center justify-between font-mono-ui text-[10px] uppercase tracking-[0.22em]">
+        <span className="text-foreground/70">
+          {value.length} / {max} {isRtl ? "مرفق" : "ATTACHED"}
+        </span>
+        <span className="text-muted-foreground normal-case tracking-normal">
+          jpg · png · webp · 5MB
+        </span>
       </div>
       <div className="grid grid-cols-2 sm:grid-cols-3 md:grid-cols-4 gap-3">
         {value.map((u, i) => (
-          <div key={u} className="img-tile group">
-            <img src={u} alt="" />
-            <div className="absolute top-1.5 inset-inline-start-1.5 ed-mono text-[9px] bg-foreground text-primary px-1.5 py-0.5">
+          <div
+            key={u}
+            className="relative aspect-square border border-foreground bg-card overflow-hidden"
+          >
+            <img src={u} alt="" className="w-full h-full object-cover" />
+            <span className="absolute top-1.5 inset-inline-start-1.5 font-mono-ui text-[9px] bg-foreground text-primary px-1.5 py-0.5 tracking-[0.18em] tabular-nums">
               № {String(i + 1).padStart(2, "0")}
-            </div>
+            </span>
             <button
               type="button"
               onClick={() => onChange(value.filter((_, j) => j !== i))}
-              className="img-rm"
+              className="absolute top-1.5 inset-inline-end-1.5 h-6 w-6 bg-foreground text-primary flex items-center justify-center hover:bg-primary hover:text-foreground transition-colors"
               aria-label="remove"
             >
               <X className="h-3.5 w-3.5" />
@@ -1004,13 +885,17 @@ function BrutalUploader({
           </div>
         ))}
         {value.length < max && (
-          <label className="img-add">
+          <label className="relative aspect-square border border-dashed border-foreground/50 bg-background hover:bg-muted hover:border-foreground transition-colors flex flex-col items-center justify-center gap-2 cursor-pointer">
             {uploading ? (
-              <Loader2 className="h-5 w-5 animate-spin" />
+              <Loader2 className="h-5 w-5 animate-spin text-foreground/70" />
             ) : (
-              <Upload className="h-5 w-5" />
+              <Upload className="h-5 w-5 text-foreground/70" />
             )}
-            <span>{uploading ? "UPLOADING" : "ATTACH"}</span>
+            <span className="font-mono-ui text-[10px] tracking-[0.22em] uppercase text-foreground/70">
+              {uploading
+                ? (isRtl ? "تحميل…" : "UPLOADING")
+                : (isRtl ? "إرفاق" : "ATTACH")}
+            </span>
             <input
               type="file"
               multiple

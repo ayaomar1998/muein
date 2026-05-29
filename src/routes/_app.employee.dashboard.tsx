@@ -4,7 +4,6 @@ import { useMemo } from "react";
 import { supabase } from "@/integrations/supabase/client";
 import { useI18n } from "@/lib/i18n";
 import { useAuth } from "@/lib/auth-context";
-import { format } from "date-fns";
 import { toast } from "sonner";
 import {
   Briefcase,
@@ -17,7 +16,7 @@ import {
   MessageSquareQuote,
   Inbox,
   Navigation,
-  Calendar,
+  Compass,
 } from "lucide-react";
 
 export const Route = createFileRoute("/_app/employee/dashboard")({
@@ -49,7 +48,7 @@ const STATUS_BUCKETS = [
   { key: "quotation_provided", group: "active", labelEn: "QUOTED", labelAr: "تسعير" },
   { key: "customer_approved_quotation", group: "active", labelEn: "APPROVED", labelAr: "موافقة" },
   { key: "work_in_progress", group: "active", labelEn: "WORKING", labelAr: "تنفيذ" },
-  { key: "waiting_customer_response", group: "active", labelEn: "WAIT CUST.", labelAr: "بإنتظار" },
+  { key: "waiting_customer_response", group: "active", labelEn: "WAITING CUST.", labelAr: "بإنتظار" },
   { key: "completed", group: "done", labelEn: "COMPLETED", labelAr: "مكتمل" },
   { key: "cancelled", group: "lost", labelEn: "CANCELLED", labelAr: "مُلغى" },
   { key: "disputed", group: "lost", labelEn: "DISPUTED", labelAr: "نزاع" },
@@ -60,10 +59,6 @@ function Dash() {
   const { user } = useAuth();
   const qc = useQueryClient();
   const isRtl = lang === "ar";
-  const fmt = useMemo(
-    () => new Intl.NumberFormat(lang === "ar" ? "ar-EG" : lang === "tr" ? "tr-TR" : "en-US"),
-    [lang],
-  );
   const name =
     (user?.user_metadata?.full_name as string | undefined) ?? user?.email?.split("@")[0] ?? "";
 
@@ -82,7 +77,7 @@ function Dash() {
       if (!emp) return null;
       const empRow = emp as EmpRow;
 
-      const [{ data: assigned }, { data: reviews }] = await Promise.all([
+      const [{ data: assigned }, { data: reviews }, { count: openCount }] = await Promise.all([
         supabase
           .from("service_requests")
           .select(
@@ -96,12 +91,17 @@ function Dash() {
           .eq("employee_id", empRow.id)
           .order("created_at", { ascending: false })
           .limit(50),
+        supabase
+          .from("service_requests")
+          .select("id", { count: "exact", head: true })
+          .in("status", ["pending", "applications_received"]),
       ]);
 
       return {
         emp: empRow,
         assignments: (assigned ?? []) as Assignment[],
         reviews: (reviews ?? []) as ReviewRow[],
+        openCount: openCount ?? 0,
       };
     },
   });
@@ -126,8 +126,10 @@ function Dash() {
     const completed = list.filter((r) => r.status === "completed");
     const total = list.length;
     const completionRate = total ? Math.round((completed.length / total) * 100) : 0;
+    const cancelled = list.filter(
+      (r) => r.status === "cancelled" || r.status === "disputed",
+    ).length;
 
-    // Last 30 vs prev 30
     const now = Date.now();
     const day = 24 * 60 * 60 * 1000;
     const last30 = list.filter((r) => now - new Date(r.created_at).getTime() <= 30 * day).length;
@@ -135,10 +137,9 @@ function Dash() {
       const t = now - new Date(r.created_at).getTime();
       return t > 30 * day && t <= 60 * day;
     }).length;
-    const trend =
+    const trend30 =
       prev30 === 0 ? (last30 > 0 ? 100 : 0) : Math.round(((last30 - prev30) / prev30) * 100);
 
-    // 14-day bar series
     const days: { d: Date; n: number }[] = [];
     for (let i = 13; i >= 0; i--) {
       const dt = new Date();
@@ -153,18 +154,15 @@ function Dash() {
     });
     const peak = Math.max(1, ...days.map((d) => d.n));
 
-    // Status counts (among my assignments)
     const statusCounts: Record<string, number> = {};
     list.forEach((r) => {
       statusCounts[r.status] = (statusCounts[r.status] || 0) + 1;
     });
 
-    // Rating distribution
     const ratingDist = [1, 2, 3, 4, 5].map(
       (s) => data.reviews.filter((r) => r.rating === s).length,
     );
     const ratingTotal = ratingDist.reduce((a, b) => a + b, 0);
-    const fiveStarPct = ratingTotal ? Math.round((ratingDist[4] / ratingTotal) * 100) : 0;
 
     const avg = Number(data.emp.avg_rating ?? 0) || 0;
 
@@ -173,20 +171,23 @@ function Dash() {
       completed,
       total,
       completionRate,
+      cancelled,
       last30,
-      trend,
+      trend30,
       days,
       peak,
       statusCounts,
       ratingDist,
       ratingTotal,
-      fiveStarPct,
       avg,
     };
   }, [data]);
 
   if (isLoading || !data || !analytics) return <DashSkeleton />;
 
+  const fmt = new Intl.NumberFormat(
+    lang === "ar" ? "ar-EG" : lang === "tr" ? "tr-TR" : "en-US",
+  );
   const onDuty = Boolean(data.emp.is_available);
 
   const categoryName = (c: Assignment["category"]) => {
@@ -215,7 +216,8 @@ function Dash() {
           <p className="mt-4 max-w-xl text-sm text-muted-foreground leading-relaxed">
             {t("tagline")}{" "}
             <span className="font-mono-ui text-foreground/70">
-              // {fmt.format(analytics.active.length)} {isRtl ? "مهمة نشطة." : "active on roster."}
+              // {fmt.format(analytics.active.length)}{" "}
+              {isRtl ? "مهمة نشطة على الطاولة." : "active on the bench."}
             </span>
           </p>
         </div>
@@ -249,14 +251,16 @@ function Dash() {
               <div className="mt-4 flex items-center gap-3">
                 <span
                   className={`inline-flex items-center gap-1 px-2 py-1 border text-[11px] font-mono-ui ${
-                    analytics.trend >= 0
+                    analytics.trend30 >= 0
                       ? "border-foreground bg-primary text-foreground"
                       : "border-destructive text-destructive"
                   }`}
                 >
-                  <ArrowUpRight className={`h-3 w-3 ${analytics.trend < 0 ? "rotate-90" : ""}`} />
-                  {analytics.trend >= 0 ? "+" : ""}
-                  {analytics.trend}%
+                  <ArrowUpRight
+                    className={`h-3 w-3 ${analytics.trend30 < 0 ? "rotate-90" : ""}`}
+                  />
+                  {analytics.trend30 >= 0 ? "+" : ""}
+                  {analytics.trend30}%
                 </span>
                 <span className="text-xs text-muted-foreground font-mono-ui uppercase tracking-wider">
                   30D · {fmt.format(analytics.last30)} {isRtl ? "جديد" : "new"}
@@ -302,7 +306,7 @@ function Dash() {
           </div>
         </div>
 
-        {/* YELLOW DUTY PANEL */}
+        {/* YELLOW AVAILABILITY PANEL */}
         <div className="col-span-12 lg:col-span-4 relative border border-foreground panel-yellow overflow-hidden">
           <div className="panel-stripes absolute inset-0" />
           <div className="panel-noise absolute inset-0" />
@@ -355,43 +359,116 @@ function Dash() {
         </div>
       </section>
 
-      {/* === TICKER === */}
-      <div className="border-y border-foreground py-3 overflow-hidden bg-card">
-        <div className="marquee-row gap-12 font-mono-ui text-xs uppercase tracking-[0.2em]">
-          {Array.from({ length: 2 }).map((_, k) => (
-            <div key={k} className="flex items-center gap-12 px-6 shrink-0">
-              <Tick label={t("my_assignments")} value={fmt.format(data.assignments.length)} />
-              <Tick label={t("active_requests")} value={fmt.format(analytics.active.length)} />
-              <Tick
-                label={t("completed_requests")}
-                value={fmt.format(analytics.completed.length)}
-                accent
-              />
-              <Tick label={t("avg_rating")} value={analytics.avg.toFixed(2)} />
-              <Tick
-                label={isRtl ? "تقييمات" : "Reviews"}
-                value={fmt.format(data.emp.total_reviews ?? 0)}
-              />
-              <Tick label={isRtl ? "إتمام" : "Completion"} value={`${analytics.completionRate}%`} />
-              <Tick
-                label={isRtl ? "آخر ٣٠ يوم" : "Last 30d"}
-                value={"+" + fmt.format(analytics.last30)}
-                accent
-              />
-            </div>
-          ))}
-        </div>
-      </div>
-
-      {/* === ROSTER + RATING === */}
+      {/* === PIPELINE + RATING === */}
       <section className="grid grid-cols-12 gap-4">
-        {/* ROSTER */}
+        {/* MY PIPELINE */}
+        <div className="col-span-12 lg:col-span-7 border border-foreground bg-card">
+          <SectionHeader
+            title={isRtl ? "تدفّق مهامي" : "MY PIPELINE"}
+            subtitle={`${fmt.format(data.assignments.length)} · ${isRtl ? "بحسب الحالة" : "by status"}`}
+          />
+          <div className="p-5 space-y-3">
+            {STATUS_BUCKETS.map((b) => {
+              const n = analytics.statusCounts[b.key] || 0;
+              const pct = data.assignments.length
+                ? (n / data.assignments.length) * 100
+                : 0;
+              const isDone = b.group === "done";
+              const isLost = b.group === "lost";
+              return (
+                <div key={b.key} className="grid grid-cols-12 items-center gap-3">
+                  <div className="col-span-4 sm:col-span-3 label-mono text-foreground/80 truncate">
+                    {isRtl ? b.labelAr : b.labelEn}
+                  </div>
+                  <div className="col-span-6 sm:col-span-7 relative h-4 bg-muted overflow-hidden">
+                    <div
+                      className={`absolute inset-y-0 start-0 transition-all duration-700 ${
+                        isDone ? "bg-primary" : isLost ? "bg-destructive/70" : "bg-foreground"
+                      }`}
+                      style={{ width: `${Math.max(pct, n > 0 ? 2 : 0)}%` }}
+                    />
+                  </div>
+                  <div className="col-span-2 font-mono-display text-sm text-end tabular-nums">
+                    {fmt.format(n)}
+                    <span className="ms-1 text-[10px] text-muted-foreground">
+                      {pct.toFixed(0)}%
+                    </span>
+                  </div>
+                </div>
+              );
+            })}
+          </div>
+        </div>
+
+        {/* RATING */}
+        <div className="col-span-12 lg:col-span-5 border border-foreground bg-card flex flex-col">
+          <SectionHeader
+            title={isRtl ? "السمعة" : "REPUTATION"}
+            subtitle={`${fmt.format(data.emp.total_reviews ?? 0)} ${isRtl ? "تقييم" : "reviews"}`}
+          />
+          <div className="p-5 flex-1 flex flex-col gap-5">
+            <div className="flex items-end justify-between">
+              <div>
+                <div className="label-mono text-muted-foreground">{t("avg_rating")}</div>
+                <div className="font-display text-7xl font-light leading-none mt-2 tabular-nums">
+                  {analytics.avg.toFixed(1)}
+                </div>
+              </div>
+              <div className="flex gap-1">
+                {[1, 2, 3, 4, 5].map((i) => (
+                  <Star
+                    key={i}
+                    className={`h-5 w-5 ${
+                      i <= Math.round(analytics.avg)
+                        ? "fill-primary text-primary"
+                        : "text-muted-foreground"
+                    }`}
+                    strokeWidth={1.5}
+                  />
+                ))}
+              </div>
+            </div>
+            <div className="space-y-2">
+              {[5, 4, 3, 2, 1].map((s) => {
+                const n = analytics.ratingDist[s - 1];
+                const pct = analytics.ratingTotal ? (n / analytics.ratingTotal) * 100 : 0;
+                return (
+                  <div key={s} className="flex items-center gap-2 text-xs font-mono-ui">
+                    <span className="w-4 tabular-nums">{s}</span>
+                    <Star className="h-3 w-3 fill-foreground text-foreground" />
+                    <div className="flex-1 h-2 bg-muted relative overflow-hidden">
+                      <div
+                        className="absolute inset-y-0 start-0 bg-foreground"
+                        style={{
+                          width: `${pct}%`,
+                          animation: "draw-line 0.9s cubic-bezier(.7,.1,.2,1) both",
+                          transformOrigin: isRtl ? "right" : "left",
+                        }}
+                      />
+                    </div>
+                    <span className="w-8 text-end tabular-nums">{n}</span>
+                  </div>
+                );
+              })}
+            </div>
+            <Link
+              to="/employee/reviews"
+              className="mt-auto inline-flex items-center justify-between border border-foreground px-3 py-2 font-mono-ui text-[11px] uppercase tracking-[0.18em] hover:bg-foreground hover:text-primary transition-colors"
+            >
+              <span>{isRtl ? "كل التقييمات" : "ALL REVIEWS"}</span>
+              <ArrowUpRight className="h-3.5 w-3.5" />
+            </Link>
+          </div>
+        </div>
+      </section>
+
+      {/* === ROSTER + NEARBY/LATEST === */}
+      <section className="grid grid-cols-12 gap-4">
+        {/* MISSION ROSTER */}
         <div className="col-span-12 lg:col-span-7 border border-foreground bg-card">
           <SectionHeader
             title={isRtl ? "كشف المهام" : "MISSION ROSTER"}
-            subtitle={`${fmt.format(data.assignments.length)} · ${isRtl ? "إجمالي" : "total"}`}
-            actionLabel={isRtl ? "كل الطلبات →" : "ALL →"}
-            actionTo="/employee/requests/nearby"
+            subtitle={isRtl ? "آخر التعيينات" : "latest assignments"}
           />
           <ol className="divide-y divide-border">
             {data.assignments.slice(0, 8).map((q, i) => {
@@ -437,9 +514,6 @@ function Dash() {
                         <span>· {timeAgo(q.created_at, isRtl)}</span>
                       </div>
                     </div>
-                    <div className="text-[10px] font-mono-ui text-muted-foreground tabular-nums pt-1 hidden sm:block">
-                      {format(new Date(q.created_at), "MM/dd")}
-                    </div>
                   </Link>
                 </li>
               );
@@ -460,74 +534,58 @@ function Dash() {
           </ol>
         </div>
 
-        {/* RATING + RECENT REVIEW */}
+        {/* NEARBY OPPORTUNITIES + LATEST REVIEW */}
         <div className="col-span-12 lg:col-span-5 flex flex-col gap-4">
-          <div className="border border-foreground bg-card flex flex-col">
+          {/* Nearby Opportunities */}
+          <div className="border border-foreground bg-card">
             <SectionHeader
-              title={isRtl ? "السمعة" : "REPUTATION"}
-              subtitle={`${fmt.format(data.emp.total_reviews ?? 0)} ${isRtl ? "تقييم" : "reviews"}`}
+              title={isRtl ? "فرص قريبة" : "NEARBY OPS"}
+              subtitle={isRtl ? "غير مُسنَدة" : "unassigned"}
             />
-            <div className="p-5 flex-1 flex flex-col gap-4">
-              <div className="flex items-end justify-between">
-                <div>
-                  <div className="label-mono text-muted-foreground">{t("avg_rating")}</div>
-                  <div className="font-display text-7xl font-light leading-none mt-2 tabular-nums">
-                    {analytics.avg.toFixed(1)}
-                  </div>
+            <div className="p-5 flex items-end justify-between gap-4">
+              <div>
+                <div className="label-mono text-muted-foreground flex items-center gap-2">
+                  <Compass className="h-3 w-3" /> {t("nearby_requests")}
                 </div>
-                <div className="flex gap-1">
-                  {[1, 2, 3, 4, 5].map((i) => (
-                    <Star
-                      key={i}
-                      className={`h-5 w-5 ${i <= Math.round(analytics.avg) ? "fill-primary text-primary" : "text-muted-foreground/40"}`}
-                      strokeWidth={1.5}
-                    />
-                  ))}
+                <div className="mt-2 font-display font-light text-[clamp(3rem,7vw,5rem)] leading-none tabular-nums">
+                  {fmt.format(data.openCount)}
                 </div>
-              </div>
-              <div className="space-y-2">
-                {[5, 4, 3, 2, 1].map((s) => {
-                  const n = analytics.ratingDist[s - 1];
-                  const pct = analytics.ratingTotal ? (n / analytics.ratingTotal) * 100 : 0;
-                  return (
-                    <div key={s} className="flex items-center gap-2 text-xs font-mono-ui">
-                      <span className="w-4 tabular-nums">{s}</span>
-                      <Star className="h-3 w-3 fill-foreground text-foreground" />
-                      <div className="flex-1 h-2 bg-muted relative overflow-hidden">
-                        <div
-                          className="absolute inset-y-0 start-0 bg-foreground"
-                          style={{
-                            width: `${pct}%`,
-                            animation: "draw-line 0.9s cubic-bezier(.7,.1,.2,1) both",
-                          }}
-                        />
-                      </div>
-                      <span className="w-8 text-end tabular-nums">{n}</span>
-                    </div>
-                  );
-                })}
+                <div className="mt-2 font-mono-ui text-[10px] uppercase tracking-[0.18em] text-muted-foreground">
+                  {data.openCount === 1
+                    ? isRtl
+                      ? "فرصة متاحة"
+                      : "OPEN OPPORTUNITY"
+                    : isRtl
+                      ? "فرص متاحة"
+                      : "OPEN OPPORTUNITIES"}
+                </div>
               </div>
               <Link
-                to="/employee/reviews"
-                className="mt-1 inline-flex items-center justify-between border border-foreground px-3 py-2 font-mono-ui text-[11px] uppercase tracking-[0.18em] hover:bg-foreground hover:text-primary transition-colors"
+                to="/employee/requests/nearby"
+                className="btn-stamp w-auto px-5 py-3 inline-flex"
               >
-                <span>{isRtl ? "كل التقييمات" : "ALL REVIEWS"}</span>
-                <ArrowUpRight className="h-3.5 w-3.5" />
+                <Navigation className="h-3.5 w-3.5 me-2" />
+                {isRtl ? "تصفح" : "BROWSE"}
               </Link>
             </div>
           </div>
 
-          {/* Latest review pull-quote */}
-          {data.reviews[0] && (
+          {/* Latest Review */}
+          {data.reviews[0] ? (
             <div className="relative border border-foreground bg-card p-5 brutal-shadow-sm">
               <div className="label-mono text-muted-foreground flex items-center gap-2 mb-3">
-                <MessageSquareQuote className="h-3 w-3" /> {isRtl ? "آخر تعليق" : "LATEST"}
+                <MessageSquareQuote className="h-3 w-3" />{" "}
+                {isRtl ? "آخر تعليق" : "LATEST"}
               </div>
               <div className="flex gap-1 mb-2">
                 {[1, 2, 3, 4, 5].map((i) => (
                   <Star
                     key={i}
-                    className={`h-3.5 w-3.5 ${i <= data.reviews[0].rating ? "fill-primary text-primary" : "text-muted-foreground/30"}`}
+                    className={`h-3.5 w-3.5 ${
+                      i <= data.reviews[0].rating
+                        ? "fill-primary text-primary"
+                        : "text-muted-foreground/30"
+                    }`}
                     strokeWidth={1.5}
                   />
                 ))}
@@ -535,58 +593,17 @@ function Dash() {
               <blockquote className="font-display text-lg leading-snug italic text-foreground/90 before:content-['“'] before:text-2xl before:me-1 after:content-['”'] after:text-2xl after:ms-1">
                 {data.reviews[0].comment ?? (isRtl ? "بدون تعليق" : "No comment")}
               </blockquote>
-              <div className="mt-3 text-[10px] font-mono-ui uppercase tracking-[0.22em] text-muted-foreground flex items-center gap-2">
-                <Calendar className="h-3 w-3" /> {timeAgo(data.reviews[0].created_at, isRtl)}
+              <div className="mt-3 text-[10px] font-mono-ui uppercase tracking-[0.22em] text-muted-foreground">
+                {timeAgo(data.reviews[0].created_at, isRtl)}
               </div>
+            </div>
+          ) : (
+            <div className="border border-foreground bg-card p-5 text-center text-sm text-muted-foreground font-mono-ui uppercase tracking-[0.18em]">
+              — {isRtl ? "لا توجد تقييمات بعد" : "no reviews yet"} —
             </div>
           )}
         </div>
       </section>
-
-      {/* === STATUS FUNNEL (MY) === */}
-      <section className="grid grid-cols-12 gap-4">
-        <div className="col-span-12 border border-foreground bg-card">
-          <SectionHeader
-            title={isRtl ? "تدفّق مهامي" : "MY PIPELINE"}
-            subtitle={`${fmt.format(data.assignments.length)} · ${isRtl ? "بحسب الحالة" : "by status"}`}
-          />
-          <div className="p-5 grid sm:grid-cols-2 gap-x-8 gap-y-3">
-            {STATUS_BUCKETS.map((b) => {
-              const n = analytics.statusCounts[b.key] || 0;
-              const pct = data.assignments.length ? (n / data.assignments.length) * 100 : 0;
-              const isDone = b.group === "done";
-              const isLost = b.group === "lost";
-              return (
-                <div key={b.key} className="grid grid-cols-12 items-center gap-3">
-                  <div className="col-span-5 label-mono text-foreground/80 truncate">
-                    {isRtl ? b.labelAr : b.labelEn}
-                  </div>
-                  <div className="col-span-5 relative h-4 bg-muted overflow-hidden">
-                    <div
-                      className={`absolute inset-y-0 start-0 transition-all duration-700 ${
-                        isDone ? "bg-primary" : isLost ? "bg-destructive/70" : "bg-foreground"
-                      }`}
-                      style={{ width: `${Math.max(pct, n > 0 ? 2 : 0)}%` }}
-                    />
-                  </div>
-                  <div className="col-span-2 font-mono-display text-sm text-end tabular-nums">
-                    {fmt.format(n)}
-                    <span className="ms-1 text-[10px] text-muted-foreground">
-                      {pct.toFixed(0)}%
-                    </span>
-                  </div>
-                </div>
-              );
-            })}
-          </div>
-        </div>
-      </section>
-
-      {/* === COLOPHON === */}
-      <footer className="border-t border-foreground/30 pt-4 flex flex-wrap items-center justify-between gap-2 text-[10px] font-mono-ui uppercase tracking-[0.22em] text-muted-foreground">
-        <span>— END OF BRIEF —</span>
-        <span>YMNAK / FIELD / OPERATIVE · {fmt.format(analytics.fiveStarPct)}% 5★</span>
-      </footer>
     </div>
   );
 }
@@ -615,49 +632,15 @@ function KeyBox({
   );
 }
 
-function SectionHeader({
-  title,
-  subtitle,
-  actionLabel,
-  actionTo,
-}: {
-  title: string;
-  subtitle?: string;
-  actionLabel?: string;
-  actionTo?: string;
-}) {
+function SectionHeader({ title, subtitle }: { title: string; subtitle?: string }) {
   return (
-    <div className="flex items-baseline justify-between gap-3 px-5 pt-4 pb-3 border-b border-foreground/15">
-      <div className="flex items-baseline gap-3">
-        <h2 className="label-mono text-foreground tracking-[0.24em]">{title}</h2>
-        {subtitle && (
-          <span className="font-mono-ui text-[10px] uppercase tracking-[0.18em] text-muted-foreground">
-            {subtitle}
-          </span>
-        )}
-      </div>
-      {actionLabel && actionTo && (
-        <Link
-          to={actionTo}
-          className="font-mono-ui text-[10px] uppercase tracking-[0.22em] text-foreground hover:text-primary transition-colors"
-        >
-          {actionLabel}
-        </Link>
+    <div className="flex items-baseline justify-between px-5 pt-4 pb-3 border-b border-foreground/15">
+      <h2 className="label-mono text-foreground tracking-[0.24em]">{title}</h2>
+      {subtitle && (
+        <span className="font-mono-ui text-[10px] uppercase tracking-[0.18em] text-muted-foreground">
+          {subtitle}
+        </span>
       )}
-    </div>
-  );
-}
-
-function Tick({ label, value, accent }: { label: string; value: string; accent?: boolean }) {
-  return (
-    <div className="flex items-center gap-2 whitespace-nowrap">
-      <span className="text-muted-foreground">{label}</span>
-      <span
-        className={`font-mono-display tabular-nums px-1.5 py-0.5 ${accent ? "bg-primary text-foreground" : "text-foreground"}`}
-      >
-        {value}
-      </span>
-      <span className="text-muted-foreground/50">/</span>
     </div>
   );
 }
@@ -698,10 +681,13 @@ function DashSkeleton() {
         <div className="col-span-12 lg:col-span-8 h-72 bg-muted" />
         <div className="col-span-12 lg:col-span-4 h-72 bg-primary/40" />
       </div>
-      <div className="h-10 bg-muted" />
       <div className="grid grid-cols-12 gap-4">
         <div className="col-span-12 lg:col-span-7 h-96 bg-muted" />
         <div className="col-span-12 lg:col-span-5 h-96 bg-muted" />
+      </div>
+      <div className="grid grid-cols-12 gap-4">
+        <div className="col-span-12 lg:col-span-7 h-72 bg-muted" />
+        <div className="col-span-12 lg:col-span-5 h-72 bg-muted" />
       </div>
     </div>
   );

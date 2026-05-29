@@ -1,10 +1,21 @@
 import { createFileRoute, Link, redirect } from "@tanstack/react-router";
 import { useQuery } from "@tanstack/react-query";
+import { useMemo } from "react";
 import { supabase } from "@/integrations/supabase/client";
 import { useI18n } from "@/lib/i18n";
 import { useAuth } from "@/lib/auth-context";
-import { StatusBadge } from "@/components/StatusBadge";
-import type { RequestStatus } from "@/lib/types";
+import {
+  ClipboardList,
+  CheckCircle2,
+  Tag,
+  ArrowUpRight,
+  Activity,
+  MapPin,
+  PlusCircle,
+  FileText,
+  ArrowRight,
+  Inbox,
+} from "lucide-react";
 
 export const Route = createFileRoute("/_app/customer/dashboard")({
   beforeLoad: async () => {
@@ -15,548 +26,643 @@ export const Route = createFileRoute("/_app/customer/dashboard")({
   component: Dash,
 });
 
-type Bucket = { word: string; cells: number };
-const TOTAL_CELLS = 5;
-
-function bucket(n: number): Bucket {
-  if (n <= 0) return { word: "ALL QUIET", cells: 0 };
-  if (n === 1) return { word: "A WHISPER", cells: 1 };
-  if (n === 2) return { word: "A HANDFUL", cells: 2 };
-  if (n <= 5) return { word: "A FEW", cells: 3 };
-  if (n <= 10) return { word: "A CROWD", cells: 4 };
-  return { word: "A FLOOD", cells: 5 };
-}
-
-function whenWord(iso: string): string {
-  const then = new Date(iso).getTime();
-  const now = Date.now();
-  const days = Math.floor((now - then) / 86400000);
-  if (days <= 0) return "TODAY";
-  if (days === 1) return "YESTERDAY";
-  if (days <= 6) return "THIS WEEK";
-  if (days <= 29) return "THIS MONTH";
-  if (days <= 89) return "EARLIER THIS SEASON";
-  return "FROM THE ARCHIVE";
-}
-
-const MONTHS = ["JANUARY", "FEBRUARY", "MARCH", "APRIL", "MAY", "JUNE", "JULY", "AUGUST", "SEPTEMBER", "OCTOBER", "NOVEMBER", "DECEMBER"];
-const DAYS_ORD: Record<number, string> = {
-  1: "FIRST", 2: "SECOND", 3: "THIRD", 4: "FOURTH", 5: "FIFTH", 6: "SIXTH", 7: "SEVENTH",
-  8: "EIGHTH", 9: "NINTH", 10: "TENTH", 11: "ELEVENTH", 12: "TWELFTH", 13: "THIRTEENTH",
-  14: "FOURTEENTH", 15: "FIFTEENTH", 16: "SIXTEENTH", 17: "SEVENTEENTH", 18: "EIGHTEENTH",
-  19: "NINETEENTH", 20: "TWENTIETH", 21: "TWENTY‑FIRST", 22: "TWENTY‑SECOND",
-  23: "TWENTY‑THIRD", 24: "TWENTY‑FOURTH", 25: "TWENTY‑FIFTH", 26: "TWENTY‑SIXTH",
-  27: "TWENTY‑SEVENTH", 28: "TWENTY‑EIGHTH", 29: "TWENTY‑NINTH", 30: "THIRTIETH", 31: "THIRTY‑FIRST",
+type ReqRow = {
+  id: string;
+  title: string;
+  status: string;
+  created_at: string;
+  completed_at: string | null;
+  city: string | null;
+  category_id: string;
 };
-const WEEKDAYS = ["SUNDAY", "MONDAY", "TUESDAY", "WEDNESDAY", "THURSDAY", "FRIDAY", "SATURDAY"];
+type CatRow = {
+  id: string;
+  name_ar: string;
+  name_en: string;
+  name_tr: string | null;
+  icon: string | null;
+};
 
-function todayInWords(): { weekday: string; month: string; day: string; year: string } {
-  const d = new Date();
-  const y = d.getFullYear();
-  const yearWords = y === 2026 ? "TWENTY TWENTY‑SIX" : y === 2027 ? "TWENTY TWENTY‑SEVEN" : y === 2025 ? "TWENTY TWENTY‑FIVE" : "THE PRESENT YEAR";
-  return {
-    weekday: WEEKDAYS[d.getDay()],
-    month: MONTHS[d.getMonth()],
-    day: DAYS_ORD[d.getDate()] ?? "—",
-    year: yearWords,
-  };
-}
-
-function Glyphs({ filled }: { filled: number }) {
-  return (
-    <div className="flex gap-1.5" aria-hidden="true">
-      {Array.from({ length: TOTAL_CELLS }).map((_, i) => (
-        <span
-          key={i}
-          className={`h-3 w-3 border border-foreground ${i < filled ? "bg-foreground" : "bg-transparent"}`}
-        />
-      ))}
-    </div>
-  );
-}
+const STATUS_BUCKETS = [
+  { key: "pending", group: "open", labelEn: "PENDING", labelAr: "قيد الانتظار" },
+  { key: "applications_received", group: "open", labelEn: "BIDS IN", labelAr: "عروض" },
+  { key: "assigned", group: "active", labelEn: "ASSIGNED", labelAr: "مُسنَد" },
+  { key: "on_the_way", group: "active", labelEn: "EN ROUTE", labelAr: "في الطريق" },
+  { key: "inspection_started", group: "active", labelEn: "INSPECT", labelAr: "كشف" },
+  { key: "quotation_provided", group: "active", labelEn: "QUOTED", labelAr: "تسعير" },
+  { key: "customer_approved_quotation", group: "active", labelEn: "APPROVED", labelAr: "موافقة" },
+  { key: "work_in_progress", group: "active", labelEn: "WORKING", labelAr: "تنفيذ" },
+  { key: "waiting_customer_response", group: "active", labelEn: "WAITING YOU", labelAr: "بإنتظارك" },
+  { key: "completed", group: "done", labelEn: "COMPLETED", labelAr: "مكتمل" },
+  { key: "cancelled", group: "lost", labelEn: "CANCELLED", labelAr: "مُلغى" },
+  { key: "disputed", group: "lost", labelEn: "DISPUTED", labelAr: "نزاع" },
+];
 
 function Dash() {
   const { t, lang } = useI18n();
   const { user } = useAuth();
-  const name = (user?.user_metadata?.full_name as string | undefined) ?? user?.email?.split("@")[0] ?? "";
-  const firstName = name.trim().split(/\s+/)[0] ?? "";
+  const isRtl = lang === "ar";
+  const name =
+    (user?.user_metadata?.full_name as string | undefined) ??
+    user?.email?.split("@")[0] ??
+    "";
 
   const { data, isLoading } = useQuery({
-    queryKey: ["customer-dash"],
+    queryKey: ["customer-dash-broadcast"],
     queryFn: async () => {
-      const { data: { user } } = await supabase.auth.getUser();
-      if (!user) return null;
-      const { data: requests } = await supabase
-        .from("service_requests")
-        .select("id, title, city, status, created_at, category:service_categories(name_ar, name_en, name_tr)")
-        .eq("customer_id", user.id)
-        .order("created_at", { ascending: false });
-      const list = requests ?? [];
-      const active = list.filter(r => !["completed", "cancelled"].includes(r.status)).length;
-      const completed = list.filter(r => r.status === "completed").length;
-      const pending = list.filter(r => r.status === "applications_received").length;
-      return { list, active, completed, pending, total: list.length };
+      const {
+        data: { user: u },
+      } = await supabase.auth.getUser();
+      if (!u) return null;
+      const sinceISO = new Date(Date.now() - 30 * 24 * 60 * 60 * 1000).toISOString();
+      const prevSinceISO = new Date(Date.now() - 60 * 24 * 60 * 60 * 1000).toISOString();
+      const [reqsAll, cats, recentReqs] = await Promise.all([
+        supabase
+          .from("service_requests")
+          .select("id,title,status,created_at,completed_at,city,category_id")
+          .eq("customer_id", u.id),
+        supabase
+          .from("service_categories")
+          .select("id,name_ar,name_en,name_tr,icon"),
+        supabase
+          .from("service_requests")
+          .select("id,title,status,created_at,completed_at,city,category_id")
+          .eq("customer_id", u.id)
+          .order("created_at", { ascending: false })
+          .limit(9),
+      ]);
+      const reqList = (reqsAll.data ?? []) as ReqRow[];
+      const last30Reqs = reqList.filter((r) => r.created_at >= sinceISO).length;
+      const prev30Reqs = reqList.filter(
+        (r) => r.created_at >= prevSinceISO && r.created_at < sinceISO,
+      ).length;
+      const active = reqList.filter(
+        (r) => !["completed", "cancelled", "disputed"].includes(r.status),
+      ).length;
+      const pending = reqList.filter(
+        (r) => r.status === "pending" || r.status === "applications_received",
+      ).length;
+      return {
+        total: reqList.length,
+        active,
+        pending,
+        completed: reqList.filter((r) => r.status === "completed").length,
+        cancelled: reqList.filter(
+          (r) => r.status === "cancelled" || r.status === "disputed",
+        ).length,
+        last30: last30Reqs,
+        prev30: prev30Reqs,
+        reqs: reqList,
+        recentReqs: (recentReqs.data ?? []) as ReqRow[],
+        categories: (cats.data ?? []) as CatRow[],
+      };
     },
   });
 
-  const today = todayInWords();
-  const total = bucket(data?.total ?? 0);
-  const active = bucket(data?.active ?? 0);
-  const pending = bucket(data?.pending ?? 0);
-  const completed = bucket(data?.completed ?? 0);
+  const analytics = useMemo(() => {
+    if (!data) return null;
+    const completionRate = data.total
+      ? Math.round((data.completed / data.total) * 100)
+      : 0;
+    const trend30 =
+      data.prev30 === 0
+        ? data.last30 > 0
+          ? 100
+          : 0
+        : Math.round(((data.last30 - data.prev30) / data.prev30) * 100);
 
-  const categories = Array.from(
-    new Set(
-      (data?.list ?? [])
-        .map(r => {
-          const c = r.category;
-          if (!c) return null;
-          return (lang === "en" ? c.name_en : lang === "tr" ? (c.name_tr ?? c.name_ar) : c.name_ar) ?? c.name_ar;
-        })
-        .filter(Boolean) as string[]
-    )
+    const days: { d: Date; n: number }[] = [];
+    for (let i = 13; i >= 0; i--) {
+      const dt = new Date();
+      dt.setHours(0, 0, 0, 0);
+      dt.setDate(dt.getDate() - i);
+      days.push({ d: dt, n: 0 });
+    }
+    data.reqs.forEach((r) => {
+      const t0 = new Date(r.created_at).setHours(0, 0, 0, 0);
+      const idx = days.findIndex((x) => x.d.getTime() === t0);
+      if (idx >= 0) days[idx].n += 1;
+    });
+    const peak = Math.max(1, ...days.map((d) => d.n));
+
+    const statusCounts: Record<string, number> = {};
+    data.reqs.forEach((r) => {
+      statusCounts[r.status] = (statusCounts[r.status] || 0) + 1;
+    });
+
+    const catCount: Record<string, number> = {};
+    data.reqs.forEach((r) => {
+      catCount[r.category_id] = (catCount[r.category_id] || 0) + 1;
+    });
+    const ranked = data.categories
+      .map((c) => ({ c, n: catCount[c.id] || 0 }))
+      .filter((x) => x.n > 0)
+      .sort((a, b) => b.n - a.n)
+      .slice(0, 5);
+    const topMax = Math.max(1, ranked[0]?.n ?? 1);
+
+    return { completionRate, trend30, days, peak, statusCounts, ranked, topMax };
+  }, [data]);
+
+  if (isLoading || !data || !analytics) return <DashSkeleton />;
+
+  const fmt = new Intl.NumberFormat(
+    lang === "ar" ? "ar-EG" : lang === "tr" ? "tr-TR" : "en-US",
   );
 
-  const marqueeWords = categories.length
-    ? categories
-    : ["PLUMBING", "ELECTRICAL", "CLEANING", "PAINTING", "AC REPAIR", "CARPENTRY", "MOVING", "GARDENING"];
-
   return (
-    <div className="-m-4 md:-m-6 lg:-m-8">
-      <style>{`
-        @import url('https://fonts.googleapis.com/css2?family=Fraunces:opsz,wght@9..144,300;9..144,400;9..144,500;9..144,700;9..144,900&family=IBM+Plex+Mono:wght@400;500;600&display=swap');
-        .dossier-bg {
-          background-color: #f4f1ea;
-          background-image:
-            radial-gradient(circle at 18% 12%, oklch(0.86 0.18 95 / 0.18) 0, transparent 42%),
-            radial-gradient(circle at 88% 6%,  oklch(0 0 0 / 0.05) 0, transparent 38%),
-            linear-gradient(180deg, transparent 0%, oklch(0 0 0 / 0.04) 100%);
-        }
-        .dark .dossier-bg {
-          background-color: #0e0e0d;
-          background-image:
-            radial-gradient(circle at 18% 12%, oklch(0.88 0.18 95 / 0.18) 0, transparent 45%),
-            radial-gradient(circle at 88% 6%,  oklch(1 0 0 / 0.05) 0, transparent 40%);
-        }
-        .grain::after {
-          content:""; position:absolute; inset:0; pointer-events:none; opacity:.5; mix-blend-mode:multiply;
-          background-image:url("data:image/svg+xml;utf8,<svg xmlns='http://www.w3.org/2000/svg' width='220' height='220'><filter id='n'><feTurbulence type='fractalNoise' baseFrequency='0.9' numOctaves='2' stitchTiles='stitch'/><feColorMatrix values='0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0.28 0'/></filter><rect width='100%' height='100%' filter='url(%23n)'/></svg>");
-          background-size:220px 220px;
-        }
-        .dark .grain::after { mix-blend-mode: screen; opacity:.35; }
-        .ed-display { font-family:'Fraunces', 'IBM Plex Sans Arabic', serif; font-variation-settings:"SOFT" 50, "WONK" 1; letter-spacing:-0.035em; line-height:0.92; }
-        .ed-italic { font-family:'Fraunces', serif; font-style: italic; font-variation-settings:"SOFT" 100, "WONK" 1; }
-        .ed-mono { font-family:'IBM Plex Mono', ui-monospace, monospace; letter-spacing:0.22em; text-transform:uppercase; }
-        .rule { height:1px; background:currentColor; opacity:.35; }
-        .rule-thick { height:2px; background:currentColor; }
-        .panel { position:relative; background:transparent; border:1px solid currentColor; }
-        .panel-fill { background:var(--color-foreground); color:var(--color-background); }
-        .stamp {
-          position:relative; display:inline-flex; align-items:center; gap:.75rem;
-          padding: 1.1rem 1.5rem;
-          background:var(--color-foreground); color:var(--color-background);
-          font-family:'IBM Plex Mono', monospace; font-size:.72rem; letter-spacing:.32em; text-transform:uppercase; font-weight:600;
-          border:1px solid var(--color-foreground); box-shadow:8px 8px 0 0 var(--color-primary);
-          transition: transform .2s ease, box-shadow .2s ease;
-        }
-        .stamp:hover { transform: translate(-2px,-2px); box-shadow: 10px 10px 0 0 var(--color-primary); }
-        .stamp:active { transform: translate(2px,2px); box-shadow: 3px 3px 0 0 var(--color-primary); }
-        [dir="rtl"] .stamp { box-shadow:-8px 8px 0 0 var(--color-primary); }
-        [dir="rtl"] .stamp:hover { transform: translate(2px,-2px); box-shadow:-10px 10px 0 0 var(--color-primary); }
-        [dir="rtl"] .stamp:active { transform: translate(-2px,2px); box-shadow:-3px 3px 0 0 var(--color-primary); }
-        .ghost-link {
-          font-family:'IBM Plex Mono', monospace; font-size:.7rem; letter-spacing:.3em; text-transform:uppercase;
-          padding:.6rem 0; border-bottom:1px solid currentColor; display:inline-flex; gap:.5rem; align-items:center;
-        }
-        .vrule { width:1px; background:currentColor; opacity:.25; }
-        .hairline-list > * + * { border-top:1px solid currentColor; }
-        .hairline-list { border-color: currentColor; }
-        .pulse-dot {
-          width:.55rem; height:.55rem; border-radius:9999px; background:var(--color-primary);
-          box-shadow:0 0 0 0 var(--color-primary);
-          animation: dot-pulse 2.2s ease-out infinite;
-        }
-        @keyframes dot-pulse {
-          0%   { box-shadow:0 0 0 0 oklch(0.86 0.18 95 / .55); }
-          70%  { box-shadow:0 0 0 12px oklch(0.86 0.18 95 / 0); }
-          100% { box-shadow:0 0 0 0 oklch(0.86 0.18 95 / 0); }
-        }
-        .marquee-track {
-          display:flex; gap:2.5rem; width:max-content;
-          animation: dossier-marquee 42s linear infinite;
-        }
-        @keyframes dossier-marquee { from { transform:translateX(0);} to { transform:translateX(-50%);} }
-        [dir="rtl"] .marquee-track { animation-name: dossier-marquee-rtl; }
-        @keyframes dossier-marquee-rtl { from { transform:translateX(0);} to { transform:translateX(50%);} }
-        .star {
-          display:inline-block; width:.7rem; height:.7rem;
-          background: var(--color-foreground);
-          clip-path: polygon(50% 0,61% 35%,98% 35%,68% 57%,79% 91%,50% 70%,21% 91%,32% 57%,2% 35%,39% 35%);
-        }
-        .corner-tag {
-          position:absolute; top:-1px; padding:.35rem .65rem;
-          font-family:'IBM Plex Mono', monospace; font-size:.6rem; letter-spacing:.28em; text-transform:uppercase;
-          background:var(--color-foreground); color:var(--color-primary);
-        }
-        .ed-mark::before { content:"§"; margin-inline-end:.4rem; font-family:'Fraunces', serif; }
-        .underline-skip {
-          background-image: linear-gradient(currentColor, currentColor);
-          background-position: 0 92%; background-repeat:no-repeat;
-          background-size: 100% 6px;
-          padding-bottom:2px;
-        }
-        .skel { background: linear-gradient(90deg, oklch(0 0 0 / 0.08), oklch(0 0 0 / 0.15), oklch(0 0 0 / 0.08));
-                background-size:200% 100%; animation: skel-sh 1.6s linear infinite; }
-        .dark .skel { background: linear-gradient(90deg, oklch(1 0 0 / 0.06), oklch(1 0 0 / 0.14), oklch(1 0 0 / 0.06)); background-size:200% 100%; }
-        @keyframes skel-sh { 0%{ background-position:200% 0;} 100%{ background-position:-200% 0;} }
-      `}</style>
+    <div className="space-y-6 -m-4 md:-m-6 lg:-m-8 p-4 md:p-6 lg:p-8 bg-background min-h-[calc(100vh-4rem)]">
+      {/* === MASTHEAD === */}
+      <header className="grid grid-cols-12 gap-4 items-end pb-2 border-b-2 border-foreground">
+        <div className="col-span-12 lg:col-span-8">
+          <h1 className="font-display text-[clamp(2.5rem,6.5vw,5.25rem)] leading-[0.9] tracking-tight text-foreground">
+            <span className="block">
+              {t("welcome_back")}
+              {name ? "،" : ""}
+            </span>
+            <span className="block italic font-light">
+              {name || (isRtl ? "صديقنا" : "friend")}
+              <span className="text-primary">.</span>
+            </span>
+          </h1>
+          <p className="mt-4 max-w-xl text-sm text-muted-foreground leading-relaxed">
+            {t("tagline")}{" "}
+            <span className="font-mono-ui text-foreground/70">
+              // {fmt.format(data.active)}{" "}
+              {isRtl ? "طلب قيد المتابعة." : "matters under your watch."}
+            </span>
+          </p>
+        </div>
+        <div className="col-span-12 lg:col-span-4 flex lg:justify-end gap-2">
+          <KeyBox
+            icon={FileText}
+            label={t("active_requests")}
+            value={fmt.format(data.active)}
+          />
+          <KeyBox
+            icon={CheckCircle2}
+            label={t("completed_requests")}
+            value={fmt.format(data.completed)}
+          />
+        </div>
+      </header>
 
-      <div className="dossier-bg min-h-[calc(100vh-4rem)] text-foreground">
-        {/* ─── MASTHEAD ────────────────────────────────────────────────── */}
-        <section className="relative overflow-hidden">
-          <div className="relative grain px-6 md:px-12 lg:px-16 pt-10 md:pt-14 pb-6">
-            <div className="flex items-baseline justify-between flex-wrap gap-3">
-              <div className="ed-mono text-[10px] md:text-[11px] flex items-center gap-3 text-foreground/70">
-                <span className="inline-flex h-2 w-2 bg-foreground" />
-                <span>VOL.&nbsp;Y &nbsp;·&nbsp; PRIVATE DOSSIER &nbsp;·&nbsp; CUSTOMER EDITION</span>
+      {/* === HERO ROW === */}
+      <section className="grid grid-cols-12 gap-4">
+        {/* HERO METRIC */}
+        <div className="col-span-12 lg:col-span-8 relative border border-foreground bg-card overflow-hidden group">
+          <div className="absolute inset-0 bg-grid opacity-60 pointer-events-none" />
+          <div className="relative p-6 md:p-8 grid grid-cols-2 gap-6">
+            <div>
+              <div className="label-mono text-muted-foreground flex items-center gap-2">
+                <ClipboardList className="h-3 w-3" /> {t("total_requests")}
               </div>
-              <div className="ed-mono text-[10px] md:text-[11px] text-foreground/70 hidden md:flex items-center gap-3">
-                <span>{today.weekday}</span>
-                <span className="opacity-40">/</span>
-                <span>{today.day}&nbsp;OF&nbsp;{today.month}</span>
-                <span className="opacity-40">/</span>
-                <span>{today.year}</span>
+              <div className="mt-3 font-display font-light text-[clamp(4rem,9vw,7.5rem)] leading-none tabular-nums">
+                {fmt.format(data.total)}
               </div>
-            </div>
-            <div className="mt-3 rule-thick text-foreground" />
-
-            <div className="mt-8 md:mt-10 grid grid-cols-12 gap-6 md:gap-10">
-              <div className="col-span-12 lg:col-span-9">
-                <div className="ed-mono text-[10px] md:text-[11px] text-foreground/60 mb-3">
-                  THE COVER — N° I
-                </div>
-                <h1 className="ed-display text-[3.2rem] sm:text-[4.5rem] md:text-[6rem] lg:text-[7.5rem] text-foreground">
-                  Welcome
-                  <span className="ed-italic font-light">&nbsp;back,</span>
-                </h1>
-                <h2 className="ed-display text-[2.4rem] sm:text-[3.4rem] md:text-[4.6rem] lg:text-[5.6rem] mt-1">
-                  <span className="underline-skip" style={{ backgroundColor: "var(--color-primary)" }}>
-                    {firstName || "friend"}
-                  </span>
-                  <span className="ed-italic font-light">.</span>
-                </h2>
-                <p className="mt-6 max-w-2xl ed-italic text-lg md:text-xl text-foreground/70">
-                  {t("tagline")}
-                </p>
-              </div>
-
-              <aside className="col-span-12 lg:col-span-3 flex flex-col gap-5">
-                <div className="panel p-5 relative">
-                  <div className="corner-tag start-3">FILED TODAY</div>
-                  <div className="mt-4 flex items-center gap-2">
-                    <span className="pulse-dot" />
-                    <span className="ed-mono text-[10px]">THE PRESS IS WARM</span>
-                  </div>
-                  <p className="ed-italic mt-3 text-foreground/80 leading-snug">
-                    Your matters are attended. Speak when you need us.
-                  </p>
-                </div>
-
-                <Link to="/customer/requests/new" className="stamp w-full justify-between">
-                  <span>{t("new_request")}</span>
-                  <Arrow />
-                </Link>
-
-                <Link to="/customer/requests" className="ghost-link text-foreground">
-                  <span>{t("my_requests")}</span>
-                  <Arrow small />
-                </Link>
-              </aside>
-            </div>
-          </div>
-
-          {/* Marquee strip */}
-          <div className="border-y border-foreground/80 overflow-hidden bg-foreground text-background py-2.5">
-            <div className="marquee-track ed-mono text-[11px]">
-              {[...marqueeWords, ...marqueeWords].map((w, i) => (
-                <span key={i} className="flex items-center gap-6">
-                  <span className="star" style={{ background: "var(--color-primary)" }} />
-                  <span>{w}</span>
-                </span>
-              ))}
-            </div>
-          </div>
-        </section>
-
-        {/* ─── STATUS ATLAS ────────────────────────────────────────────── */}
-        <section className="px-6 md:px-12 lg:px-16 pt-10">
-          <div className="flex items-baseline justify-between mb-5">
-            <h3 className="ed-mono text-[11px] text-foreground/70">THE LEDGER &nbsp;·&nbsp; AT A GLANCE</h3>
-            <div className="ed-italic text-foreground/60 hidden md:block">a quiet weighing of things</div>
-          </div>
-
-          <div className="grid grid-cols-1 md:grid-cols-2 xl:grid-cols-4 gap-0 border border-foreground">
-            <AtlasPanel
-              label="ON RECORD"
-              caption="the entire docket"
-              bucketVal={total}
-              loading={isLoading}
-            />
-            <AtlasPanel
-              label="OPEN MATTERS"
-              caption="under your watch"
-              bucketVal={active}
-              loading={isLoading}
-              accent
-            />
-            <AtlasPanel
-              label="AWAITING VERDICT"
-              caption="offers to consider"
-              bucketVal={pending}
-              loading={isLoading}
-            />
-            <AtlasPanel
-              label="LAID TO REST"
-              caption="favourably resolved"
-              bucketVal={completed}
-              loading={isLoading}
-              last
-            />
-          </div>
-        </section>
-
-        {/* ─── INDEX + PULSE ───────────────────────────────────────────── */}
-        <section className="px-6 md:px-12 lg:px-16 pt-12 pb-16">
-          <div className="grid grid-cols-12 gap-0 border border-foreground bg-background/40">
-            {/* INDEX */}
-            <div className="col-span-12 lg:col-span-8 p-6 md:p-8 relative">
-              <div className="flex items-center justify-between flex-wrap gap-3 mb-6">
-                <div>
-                  <div className="ed-mono text-[11px] text-foreground/70">THE INDEX</div>
-                  <h3 className="ed-display text-3xl md:text-4xl mt-1">{t("recent_requests")}</h3>
-                </div>
-                <Link to="/customer/requests" className="ghost-link text-foreground">
-                  <span>READ THE FULL DOSSIER</span>
-                  <Arrow small />
-                </Link>
-              </div>
-
-              {isLoading ? (
-                <div className="space-y-4">
-                  {Array.from({ length: 4 }).map((_, i) => (
-                    <div key={i} className="border-t border-foreground/20 pt-4">
-                      <div className="skel h-6 w-2/3 rounded" />
-                      <div className="skel h-3 w-1/3 mt-2 rounded" />
-                    </div>
-                  ))}
-                </div>
-              ) : data?.list.length ? (
-                <ul className="hairline-list border-foreground/20">
-                  {data.list.slice(0, 6).map((r) => {
-                    const cat = r.category
-                      ? (lang === "en" ? r.category.name_en : lang === "tr" ? (r.category.name_tr ?? r.category.name_ar) : r.category.name_ar) ?? r.category.name_ar
-                      : null;
-                    return (
-                      <li key={r.id} className="group">
-                        <Link
-                          to="/customer/requests/$id"
-                          params={{ id: r.id }}
-                          className="flex items-start gap-6 py-5"
-                        >
-                          <div className="ed-mono text-[10px] pt-2 text-foreground/55 w-20 shrink-0">
-                            {whenWord(r.created_at)}
-                          </div>
-                          <div className="flex-1 min-w-0">
-                            <div className="ed-display text-2xl md:text-3xl leading-tight">
-                              <span className="group-hover:underline-skip">
-                                <span
-                                  className="group-hover:px-1 transition-all"
-                                  style={{ backgroundImage: "linear-gradient(transparent 70%, var(--color-primary) 70%)" }}
-                                >
-                                  {r.title}
-                                </span>
-                              </span>
-                            </div>
-                            <div className="mt-2 ed-mono text-[10px] text-foreground/60 flex flex-wrap items-center gap-x-4 gap-y-1">
-                              {cat && <span>· {cat.toUpperCase()}</span>}
-                              {r.city && <span>· {r.city.toUpperCase()}</span>}
-                            </div>
-                          </div>
-                          <div className="shrink-0">
-                            <StatusBadge status={r.status as RequestStatus} />
-                          </div>
-                        </Link>
-                      </li>
-                    );
-                  })}
-                </ul>
-              ) : (
-                <EmptyDocket />
-              )}
-            </div>
-
-            {/* PULSE column */}
-            <div className="col-span-12 lg:col-span-4 border-t lg:border-t-0 lg:border-s border-foreground p-6 md:p-8 flex flex-col gap-8 bg-foreground text-background relative grain">
-              <div>
-                <div className="ed-mono text-[10px] text-background/60">THE PULSE</div>
-                <h4 className="ed-display text-3xl mt-1">How things stand.</h4>
-              </div>
-
-              <PulseRow label="Open matters" bucketVal={active} dark />
-              <PulseRow label="Awaiting verdict" bucketVal={pending} dark />
-              <PulseRow label="Laid to rest" bucketVal={completed} dark />
-
-              <div className="rule" />
-
-              <div>
-                <div className="ed-mono text-[10px] text-background/60">A SUGGESTION</div>
-                <p className="ed-italic mt-2 text-lg leading-snug">
-                  {active.cells === 0
-                    ? "Begin a new chapter. Pen the first request of the day."
-                    : "Tend to the open matters. They wait kindly, but they wait."}
-                </p>
-                <Link
-                  to={active.cells === 0 ? "/customer/requests/new" : "/customer/requests"}
-                  className="mt-5 ed-mono text-[10px] inline-flex items-center gap-2 pb-1 border-b border-background"
+              <div className="mt-4 flex items-center gap-3">
+                <span
+                  className={`inline-flex items-center gap-1 px-2 py-1 border text-[11px] font-mono-ui ${
+                    analytics.trend30 >= 0
+                      ? "border-foreground bg-primary text-foreground"
+                      : "border-destructive text-destructive"
+                  }`}
                 >
-                  {active.cells === 0 ? "OPEN A NEW MATTER" : "ATTEND TO THEM"}
-                  <Arrow small light />
-                </Link>
+                  <ArrowUpRight
+                    className={`h-3 w-3 ${analytics.trend30 < 0 ? "rotate-90" : ""}`}
+                  />
+                  {analytics.trend30 >= 0 ? "+" : ""}
+                  {analytics.trend30}%
+                </span>
+                <span className="text-xs text-muted-foreground font-mono-ui uppercase tracking-wider">
+                  30D · {fmt.format(data.last30)} {isRtl ? "جديد" : "new"}
+                </span>
               </div>
+            </div>
 
-              {/* Decorative folio */}
-              <div className="mt-auto flex items-end justify-between pt-6">
-                <div className="ed-display text-5xl opacity-90">Y.</div>
-                <div className="ed-mono text-[9px] text-background/60 text-end">
-                  <div>FOLIO &nbsp;·&nbsp; PRIVATE</div>
-                  <div>SET IN FRAUNCES &amp; PLEX</div>
-                </div>
+            {/* 14-day bars */}
+            <div className="flex flex-col">
+              <div className="label-mono text-muted-foreground flex items-center justify-between">
+                <span className="flex items-center gap-2">
+                  <Activity className="h-3 w-3" /> 14-DAY PULSE
+                </span>
+                <span className="font-mono-ui normal-case tracking-normal text-foreground">
+                  peak {analytics.peak}
+                </span>
+              </div>
+              <div className="mt-4 flex-1 flex items-end gap-[3px] min-h-[140px]">
+                {analytics.days.map((d, i) => {
+                  const h = Math.max(4, (d.n / analytics.peak) * 100);
+                  const today = i === analytics.days.length - 1;
+                  return (
+                    <div key={i} className="flex-1 flex flex-col items-center gap-1">
+                      <div
+                        className={`w-full transition-all duration-700 ${
+                          today
+                            ? "bg-primary"
+                            : "bg-foreground/85 group-hover:bg-foreground"
+                        }`}
+                        style={{
+                          height: `${h}%`,
+                          animation: `fade-up 0.6s ease-out ${i * 30}ms both`,
+                        }}
+                        title={`${d.d.toDateString()} · ${d.n}`}
+                      />
+                    </div>
+                  );
+                })}
+              </div>
+              <div className="mt-2 flex justify-between text-[10px] font-mono-ui text-muted-foreground">
+                <span>
+                  {analytics.days[0].d.getDate()}/
+                  {analytics.days[0].d.getMonth() + 1}
+                </span>
+                <span>{isRtl ? "اليوم" : "today"}</span>
               </div>
             </div>
           </div>
+        </div>
 
-          {/* Closing rule */}
-          <div className="mt-10 flex items-center gap-4 text-foreground/60">
-            <div className="flex-1 rule" />
-            <span className="ed-mono text-[10px]">— FIN DE DOSSIER —</span>
-            <div className="flex-1 rule" />
+        {/* YELLOW COMPLETION RATE PANEL */}
+        <div className="col-span-12 lg:col-span-4 relative border border-foreground panel-yellow overflow-hidden">
+          <div className="panel-stripes absolute inset-0" />
+          <div className="panel-noise absolute inset-0" />
+          <div className="relative p-6 h-full flex flex-col justify-between min-h-[280px]">
+            <div className="flex items-start justify-between">
+              <div className="label-mono">COMPLETION RATE</div>
+              <CheckCircle2 className="h-4 w-4" />
+            </div>
+            <div className="my-4">
+              <div className="font-display font-light text-[clamp(5rem,12vw,9rem)] leading-[0.85] tabular-nums -tracking-[0.04em]">
+                {analytics.completionRate}
+                <span className="text-[0.4em] align-top ms-1">%</span>
+              </div>
+            </div>
+            <div className="font-mono-ui text-[11px] uppercase tracking-[0.18em] space-y-1">
+              <div className="flex justify-between border-t border-foreground/30 pt-2">
+                <span>completed</span>
+                <span className="font-semibold">{fmt.format(data.completed)}</span>
+              </div>
+              <div className="flex justify-between">
+                <span>cancelled / disputed</span>
+                <span className="font-semibold">{fmt.format(data.cancelled)}</span>
+              </div>
+              <div className="flex justify-between">
+                <span>in pipeline</span>
+                <span className="font-semibold">
+                  {fmt.format(data.total - data.completed - data.cancelled)}
+                </span>
+              </div>
+            </div>
           </div>
-        </section>
-      </div>
-    </div>
-  );
-}
+        </div>
+      </section>
 
-/* ── building blocks ──────────────────────────────────────────────── */
+      {/* === PIPELINE + NEXT STEPS === */}
+      <section className="grid grid-cols-12 gap-4">
+        {/* STATUS PIPELINE */}
+        <div className="col-span-12 lg:col-span-7 border border-foreground bg-card">
+          <SectionHeader
+            title={isRtl ? "خط أنابيب الطلبات" : "REQUEST PIPELINE"}
+            subtitle={`${fmt.format(data.total)} · ${isRtl ? "بحسب الحالة" : "by status"}`}
+          />
+          <div className="p-5 space-y-3">
+            {STATUS_BUCKETS.map((b) => {
+              const n = analytics.statusCounts[b.key] || 0;
+              const pct = data.total ? (n / data.total) * 100 : 0;
+              const isDone = b.group === "done";
+              const isLost = b.group === "lost";
+              return (
+                <div key={b.key} className="group/row grid grid-cols-12 items-center gap-3">
+                  <div className="col-span-4 sm:col-span-3 label-mono text-foreground/80 truncate">
+                    {isRtl ? b.labelAr : b.labelEn}
+                  </div>
+                  <div className="col-span-6 sm:col-span-7 relative h-4 bg-muted overflow-hidden">
+                    <div
+                      className={`absolute inset-y-0 start-0 transition-all duration-700 ${
+                        isDone ? "bg-primary" : isLost ? "bg-destructive/70" : "bg-foreground"
+                      }`}
+                      style={{ width: `${Math.max(pct, n > 0 ? 2 : 0)}%` }}
+                    />
+                  </div>
+                  <div className="col-span-2 font-mono-display text-sm text-end tabular-nums">
+                    {fmt.format(n)}
+                    <span className="ms-1 text-[10px] text-muted-foreground">
+                      {pct.toFixed(0)}%
+                    </span>
+                  </div>
+                </div>
+              );
+            })}
+          </div>
+        </div>
 
-function AtlasPanel({
-  label, caption, bucketVal, loading, accent, last,
-}: { label: string; caption: string; bucketVal: Bucket; loading?: boolean; accent?: boolean; last?: boolean }) {
-  return (
-    <div
-      className={`relative p-6 md:p-7 border-foreground ${last ? "" : "md:border-e xl:border-e"} border-b md:border-b-0 last:border-b-0 ${accent ? "bg-primary text-primary-foreground" : ""}`}
-    >
-      <div className="flex items-start justify-between">
-        <div className="ed-mono text-[10px]">{label}</div>
-        <span className="ed-mono text-[10px] opacity-60">№</span>
-      </div>
-      <div className="mt-7 md:mt-10">
-        {loading ? (
-          <div className="skel h-9 w-32 rounded" />
-        ) : (
-          <div className="ed-display text-4xl md:text-5xl leading-none">
-            {bucketVal.word.split(" ").map((w, i, arr) =>
-              i === arr.length - 1 ? (
-                <span key={i} className="ed-italic font-light">{" " + w.toLowerCase()}</span>
-              ) : (
-                <span key={i}>{i === 0 ? "" : " "}{w.toLowerCase()}</span>
-              )
+        {/* NEXT STEP / ACTION CARD */}
+        <div className="col-span-12 lg:col-span-5 border border-foreground bg-card flex flex-col">
+          <SectionHeader
+            title={isRtl ? "الخطوة التالية" : "NEXT STEP"}
+            subtitle={
+              data.pending > 0
+                ? isRtl
+                  ? "عروض بانتظارك"
+                  : "offers awaiting"
+                : data.active > 0
+                  ? isRtl
+                    ? "متابعة جارية"
+                    : "in motion"
+                  : isRtl
+                    ? "ابدأ مهمة"
+                    : "start something"
+            }
+          />
+          <div className="p-5 flex-1 flex flex-col gap-5">
+            <div className="flex items-end justify-between">
+              <div>
+                <div className="label-mono text-muted-foreground">
+                  {isRtl ? "بانتظار قرارك" : "awaiting your verdict"}
+                </div>
+                <div className="font-display text-7xl font-light leading-none mt-2 tabular-nums">
+                  {fmt.format(data.pending)}
+                </div>
+              </div>
+              <div className="text-end">
+                <div className="label-mono text-muted-foreground">
+                  {isRtl ? "نشط" : "active"}
+                </div>
+                <div className="font-display text-4xl font-light leading-none mt-2 tabular-nums">
+                  {fmt.format(data.active)}
+                </div>
+              </div>
+            </div>
+
+            <p className="font-mono-ui text-[11px] uppercase tracking-[0.18em] text-muted-foreground leading-relaxed">
+              {data.active === 0
+                ? isRtl
+                  ? "// لا يوجد طلب قيد التنفيذ. ابدأ بطلب جديد."
+                  : "// nothing in motion. open a new matter."
+                : data.pending > 0
+                  ? isRtl
+                    ? "// عروض جديدة بانتظار موافقتك."
+                    : "// new offers awaiting your decision."
+                  : isRtl
+                    ? "// طلباتك قيد التنفيذ. تابع التقدّم."
+                    : "// your matters are progressing. track them."}
+            </p>
+
+            <div className="mt-auto grid grid-cols-2 gap-2">
+              <Link
+                to="/customer/requests/new"
+                className="border border-foreground bg-foreground text-primary px-3 py-3 flex items-center justify-between font-mono-ui text-[11px] uppercase tracking-[0.18em] hover:bg-primary hover:text-foreground transition-colors"
+              >
+                <span className="flex items-center gap-2">
+                  <PlusCircle className="h-3.5 w-3.5" />
+                  {t("new_request")}
+                </span>
+                <ArrowRight className={`h-3.5 w-3.5 ${isRtl ? "rotate-180" : ""}`} />
+              </Link>
+              <Link
+                to="/customer/requests"
+                className="border border-foreground bg-card px-3 py-3 flex items-center justify-between font-mono-ui text-[11px] uppercase tracking-[0.18em] hover:bg-foreground hover:text-primary transition-colors"
+              >
+                <span className="flex items-center gap-2">
+                  <FileText className="h-3.5 w-3.5" />
+                  {t("my_requests")}
+                </span>
+                <ArrowRight className={`h-3.5 w-3.5 ${isRtl ? "rotate-180" : ""}`} />
+              </Link>
+            </div>
+          </div>
+        </div>
+      </section>
+
+      {/* === LEDGER + CATEGORIES === */}
+      <section className="grid grid-cols-12 gap-4">
+        {/* LEDGER */}
+        <div className="col-span-12 lg:col-span-7 border border-foreground bg-card">
+          <SectionHeader
+            title={isRtl ? "السجل الحي" : "LIVE LEDGER"}
+            subtitle={isRtl ? "آخر طلباتك" : "latest filings"}
+          />
+          <ol className="divide-y divide-border">
+            {data.recentReqs.slice(0, 9).map((q, i) => (
+              <li
+                key={q.id}
+                className="group/item hover:bg-muted/40 transition-colors"
+              >
+                <Link
+                  to="/customer/requests/$id"
+                  params={{ id: q.id }}
+                  className="flex gap-4 px-5 py-3"
+                >
+                  <div className="font-mono-ui text-[10px] text-muted-foreground tabular-nums pt-1 w-8 shrink-0">
+                    {String(i + 1).padStart(2, "0")}
+                  </div>
+                  <div className="shrink-0 mt-1">
+                    <div className="h-7 w-7 border border-foreground bg-foreground text-background flex items-center justify-center">
+                      <ClipboardList className="h-3.5 w-3.5" />
+                    </div>
+                  </div>
+                  <div className="min-w-0 flex-1">
+                    <div className="flex items-center gap-2 flex-wrap">
+                      <span className="font-display text-base leading-tight truncate">
+                        {q.title}
+                      </span>
+                      <StatusPill status={q.status} isRtl={isRtl} />
+                    </div>
+                    <div className="text-xs text-muted-foreground font-mono-ui mt-0.5 flex items-center gap-2">
+                      {q.city && (
+                        <span className="inline-flex items-center gap-1">
+                          <MapPin className="h-3 w-3" />
+                          {q.city}
+                        </span>
+                      )}
+                      <span>· {timeAgo(q.created_at, isRtl)}</span>
+                    </div>
+                  </div>
+                  <div className="text-[10px] font-mono-ui text-muted-foreground tabular-nums pt-1 hidden sm:block">
+                    {timeAgo(q.created_at, isRtl)}
+                  </div>
+                </Link>
+              </li>
+            ))}
+            {data.recentReqs.length === 0 && (
+              <li className="px-5 py-16 text-center">
+                <div className="inline-flex h-12 w-12 border border-foreground bg-background items-center justify-center mb-3">
+                  <Inbox className="h-5 w-5 text-foreground/60" />
+                </div>
+                <div className="font-mono-ui text-[10px] uppercase tracking-[0.22em] text-muted-foreground">
+                  — {isRtl ? "لا توجد طلبات بعد" : "no filings yet"} —
+                </div>
+                <Link
+                  to="/customer/requests/new"
+                  className="mt-4 inline-flex items-center gap-2 px-4 py-2 border border-foreground bg-foreground text-primary font-mono-ui text-[11px] uppercase tracking-[0.18em] hover:bg-primary hover:text-foreground transition-colors"
+                >
+                  <PlusCircle className="h-3.5 w-3.5" />
+                  {t("new_request")}
+                </Link>
+              </li>
             )}
-            <span className="ed-italic">.</span>
-          </div>
-        )}
-      </div>
-      <div className="mt-5 flex items-center justify-between">
-        <Glyphs filled={bucketVal.cells} />
-        <span className="ed-italic text-sm opacity-70">{caption}</span>
-      </div>
-    </div>
-  );
-}
-
-function PulseRow({ label, bucketVal, dark }: { label: string; bucketVal: Bucket; dark?: boolean }) {
-  return (
-    <div>
-      <div className="flex items-baseline justify-between gap-3">
-        <div>
-          <div className={`ed-mono text-[10px] ${dark ? "text-background/60" : "text-foreground/60"}`}>
-            {label.toUpperCase()}
-          </div>
-          <div className="ed-display text-2xl mt-1">
-            <span className="ed-italic font-light">{bucketVal.word.toLowerCase()}.</span>
-          </div>
+          </ol>
         </div>
-        <div className={dark ? "[&_span]:border-background [&_.on]:bg-background" : ""}>
-          <DarkGlyphs filled={bucketVal.cells} dark={!!dark} />
+
+        {/* TOP CATEGORIES */}
+        <div className="col-span-12 lg:col-span-5 border border-foreground bg-card">
+          <SectionHeader
+            title={isRtl ? "فئاتك الأكثر طلباً" : "YOUR TOP CATEGORIES"}
+            subtitle={isRtl ? "حسب الحجم" : "by volume"}
+          />
+          <ol className="p-5 space-y-4">
+            {analytics.ranked.map((row, i) => {
+              const nm =
+                lang === "ar"
+                  ? row.c.name_ar
+                  : lang === "tr"
+                    ? row.c.name_tr || row.c.name_en
+                    : row.c.name_en;
+              const pct = (row.n / analytics.topMax) * 100;
+              return (
+                <li
+                  key={row.c.id}
+                  className="grid grid-cols-12 items-center gap-3"
+                >
+                  <div className="col-span-1 font-display text-3xl font-light leading-none text-muted-foreground tabular-nums">
+                    {i + 1}
+                  </div>
+                  <div className="col-span-9">
+                    <div className="flex items-baseline justify-between gap-3">
+                      <span className="font-display text-lg leading-tight truncate">
+                        {nm}
+                      </span>
+                      <span className="font-mono-ui text-xs text-muted-foreground tabular-nums">
+                        {fmt.format(row.n)}
+                      </span>
+                    </div>
+                    <div className="mt-2 h-[3px] bg-muted overflow-hidden">
+                      <div
+                        className="h-full bg-foreground"
+                        style={{
+                          width: `${pct}%`,
+                          animation:
+                            "draw-line 0.9s cubic-bezier(.7,.1,.2,1) both",
+                        }}
+                      />
+                    </div>
+                  </div>
+                  <div className="col-span-2 text-end">
+                    <span className="inline-block px-2 py-0.5 border border-foreground/60 font-mono-ui text-[10px]">
+                      {Math.round(pct)}%
+                    </span>
+                  </div>
+                </li>
+              );
+            })}
+            {analytics.ranked.length === 0 && (
+              <li className="text-center py-10">
+                <div className="inline-flex h-12 w-12 border border-foreground bg-background items-center justify-center mb-3">
+                  <Tag className="h-5 w-5 text-foreground/60" />
+                </div>
+                <div className="font-mono-ui text-[10px] uppercase tracking-[0.22em] text-muted-foreground">
+                  — {isRtl ? "لا توجد فئات بعد" : "no categories yet"} —
+                </div>
+              </li>
+            )}
+          </ol>
+        </div>
+      </section>
+    </div>
+  );
+}
+
+/* ---------- subcomponents ---------- */
+
+function KeyBox({
+  icon: Icon,
+  label,
+  value,
+}: {
+  icon: typeof FileText;
+  label: string;
+  value: string;
+}) {
+  return (
+    <div className="flex-1 lg:flex-none lg:min-w-[120px] border border-foreground bg-card px-3 py-2 flex items-center gap-3">
+      <div className="h-8 w-8 bg-foreground text-background flex items-center justify-center shrink-0">
+        <Icon className="h-4 w-4" />
+      </div>
+      <div className="min-w-0">
+        <div className="label-mono text-muted-foreground truncate">{label}</div>
+        <div className="font-display text-xl leading-none tabular-nums">
+          {value}
         </div>
       </div>
     </div>
   );
 }
 
-function DarkGlyphs({ filled, dark }: { filled: number; dark: boolean }) {
+function SectionHeader({
+  title,
+  subtitle,
+}: {
+  title: string;
+  subtitle?: string;
+}) {
   return (
-    <div className="flex gap-1.5" aria-hidden="true">
-      {Array.from({ length: TOTAL_CELLS }).map((_, i) => (
-        <span
-          key={i}
-          className={`h-3 w-3 border ${dark ? "border-background" : "border-foreground"} ${
-            i < filled ? (dark ? "bg-background" : "bg-foreground") : "bg-transparent"
-          }`}
-        />
-      ))}
+    <div className="flex items-baseline justify-between px-5 pt-4 pb-3 border-b border-foreground/15">
+      <h2 className="label-mono text-foreground tracking-[0.24em]">{title}</h2>
+      {subtitle && (
+        <span className="font-mono-ui text-[10px] uppercase tracking-[0.18em] text-muted-foreground">
+          {subtitle}
+        </span>
+      )}
     </div>
   );
 }
 
-function EmptyDocket() {
+function StatusPill({ status, isRtl }: { status: string; isRtl: boolean }) {
+  const bucket = STATUS_BUCKETS.find((b) => b.key === status);
+  const label = bucket ? (isRtl ? bucket.labelAr : bucket.labelEn) : status;
+  const tone =
+    bucket?.group === "done"
+      ? "bg-primary text-foreground"
+      : bucket?.group === "lost"
+        ? "border border-destructive text-destructive"
+        : "border border-foreground text-foreground";
   return (
-    <div className="py-16 md:py-20 text-center max-w-xl mx-auto">
-      <div className="ed-mono text-[10px] text-foreground/60">NIHIL · NOTHING ON THE TABLE</div>
-      <h4 className="ed-display text-5xl md:text-6xl mt-3">
-        The docket
-        <span className="ed-italic font-light"> is quiet.</span>
-      </h4>
-      <p className="ed-italic mt-4 text-foreground/70 text-lg">
-        Pen the first request, and we shall take it from here.
-      </p>
-      <div className="mt-8 inline-block">
-        <Link to="/customer/requests/new" className="stamp">
-          <span>OPEN A MATTER</span>
-          <Arrow />
-        </Link>
-      </div>
-    </div>
-  );
-}
-
-function Arrow({ small, light }: { small?: boolean; light?: boolean } = {}) {
-  const size = small ? 14 : 18;
-  return (
-    <svg
-      width={size}
-      height={size}
-      viewBox="0 0 24 24"
-      fill="none"
-      stroke={light ? "currentColor" : "currentColor"}
-      strokeWidth="2"
-      strokeLinecap="square"
-      strokeLinejoin="miter"
-      className="rtl:rotate-180"
-      aria-hidden="true"
+    <span
+      className={`px-1.5 py-0.5 font-mono-ui text-[10px] tracking-[0.16em] uppercase ${tone}`}
     >
-      <path d="M5 12h14" />
-      <path d="M13 5l7 7-7 7" />
-    </svg>
+      {label}
+    </span>
+  );
+}
+
+/* ---------- helpers ---------- */
+
+function timeAgo(iso: string, isRtl: boolean): string {
+  const diff = Date.now() - new Date(iso).getTime();
+  const m = Math.floor(diff / 60000);
+  if (m < 1) return isRtl ? "الآن" : "now";
+  if (m < 60) return isRtl ? `قبل ${m}د` : `${m}m ago`;
+  const h = Math.floor(m / 60);
+  if (h < 24) return isRtl ? `قبل ${h}س` : `${h}h ago`;
+  const d = Math.floor(h / 24);
+  return isRtl ? `قبل ${d}ي` : `${d}d ago`;
+}
+
+function DashSkeleton() {
+  return (
+    <div className="space-y-4 animate-pulse">
+      <div className="h-9 bg-muted" />
+      <div className="h-24 bg-muted" />
+      <div className="grid grid-cols-12 gap-4">
+        <div className="col-span-12 lg:col-span-8 h-72 bg-muted" />
+        <div className="col-span-12 lg:col-span-4 h-72 bg-primary/40" />
+      </div>
+      <div className="h-10 bg-muted" />
+      <div className="grid grid-cols-12 gap-4">
+        <div className="col-span-12 lg:col-span-7 h-96 bg-muted" />
+        <div className="col-span-12 lg:col-span-5 h-96 bg-muted" />
+      </div>
+    </div>
   );
 }
