@@ -1,5 +1,8 @@
 [build]
-  command = "npm run build"
+  # Use bun for install + build (the project ships bun.lock).
+  # npm install drops platform-specific optional rollup binaries on Linux,
+  # which breaks vite. bun install respects bun.lock and pulls them correctly.
+  command = "bun install --frozen-lockfile && bun run build"
   publish = "dist/client"
 
 [build.environment]
@@ -7,6 +10,7 @@
   # Cloudflare worker. The lovable config reads this env var.
   NITRO_PRESET = "netlify"
   NODE_VERSION = "20"
+  BUN_VERSION = "1.2.0"
 
 # Nitro's `netlify` preset auto-emits the SSR function under .netlify/functions-internal/
 # and writes a _redirects file that funnels all non-asset requests to it.
