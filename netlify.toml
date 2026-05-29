@@ -1,8 +1,7 @@
 [build]
-  command = "bun install --frozen-lockfile && bun run build"
+  command = "npm install && npm run build"
   publish = "dist/client"
 
 [build.environment]
   NITRO_PRESET = "netlify"
   NODE_VERSION = "20"
-  BUN_VERSION = "1.2.0"
