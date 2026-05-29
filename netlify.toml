@@ -1,7 +1,13 @@
 [build]
   command = "npm run build"
-  publish = "dist"
+  publish = "dist/client"
 
 [build.environment]
+  # Tell Nitro to emit a Netlify deployment (function-based SSR) instead of a
+  # Cloudflare worker. The lovable config reads this env var.
   NITRO_PRESET = "netlify"
   NODE_VERSION = "20"
+
+# Nitro's `netlify` preset auto-emits the SSR function under .netlify/functions-internal/
+# and writes a _redirects file that funnels all non-asset requests to it.
+# No manual [[redirects]] block is required.
